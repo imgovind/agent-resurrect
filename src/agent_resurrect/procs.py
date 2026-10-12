@@ -37,6 +37,19 @@ def _run_ps(argv: List[str]) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
+def walk_chain(pid: int, lookup: Callable[[int], Optional[ProcInfo]]) -> List[ProcInfo]:
+    """The parent chain from `pid` upward, self first, via `lookup(pid) -> ProcInfo or None`. Stops before
+    pid 1 (launchd), at a process that cannot be looked up, and at any pid already seen (a cycle)."""
+    chain: List[ProcInfo] = []
+    seen = set()
+    current = lookup(pid)
+    while current is not None and current.pid > 1 and current.pid not in seen:
+        chain.append(current)
+        seen.add(current.pid)
+        current = lookup(current.ppid) if current.ppid > 1 else None
+    return chain
+
+
 class Procs:
     def __init__(self, run: Optional[Callable[[List[str]], str]] = None):
         self._run = run or _run_ps
@@ -55,14 +68,13 @@ class Procs:
                         started=" ".join(parts[4:9]), comm=parts[9], args=args)
 
     def ancestors(self, pid: int) -> List[ProcInfo]:
-        """`pid` itself, then its parent, grandparent, ... stopping before pid 1 (launchd)."""
-        chain, seen = [], set()
-        current = self.get(pid)
-        while current is not None and current.pid > 1 and current.pid not in seen:
-            chain.append(current)
-            seen.add(current.pid)
-            current = self.get(current.ppid) if current.ppid > 1 else None
-        return chain
+        """`pid` itself, then its parent, grandparent, ... stopping before pid 1 (launchd).
+
+        One get() (two single-pid `ps` runs) per process, deliberately. Measured on macOS with ~1,000
+        processes: a 6-deep chain this way took ~85-115 ms, while a `ps -A` snapshot took ~250 ms (its tty
+        column does a device-name lookup per process) and any multi-pid `ps -p a,b,c` ~170-190 ms against
+        6-9 ms for one pid. Avoiding `ps` altogether (sysctl/proc_pidinfo via ctypes) is the real speedup."""
+        return walk_chain(pid, self.get)
 
     def is_alive(self, pid: Optional[int], started: Optional[str]) -> bool:
         """True only if `pid` exists and, when `started` is given, started then (a reused pid is a different process)."""

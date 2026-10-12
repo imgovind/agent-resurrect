@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from agent_resurrect import config, paths, store
 from agent_resurrect.model import STATUS_CONSUMED, Record, utc_now_iso
-from agent_resurrect.procs import Procs
+from agent_resurrect.procs import Procs, walk_chain
 from tests.helpers import FakeProcs, make_record, proc, temp_home
 
 
@@ -201,6 +201,17 @@ class ProcsTest(unittest.TestCase):
         self.assertEqual([p.pid for p in procs.ancestors(7)], [7, 8])  # cycle-safe
         self.assertEqual(procs.ancestors(999), [])
         self.assertEqual(Procs(run=lambda argv: "").ancestors(300), [])  # ps unavailable
+
+    def test_walk_chain_is_the_one_walk(self):
+        table = {30: proc(30, 20, "python3"), 20: proc(20, 10, "claude"), 10: proc(10, 1, "-zsh"),
+                 5: proc(5, 5, "self-parent"), 7: proc(7, 99, "orphan")}
+        self.assertEqual([p.pid for p in walk_chain(30, table.get)], [30, 20, 10])
+        self.assertEqual([p.pid for p in walk_chain(5, table.get)], [5])  # its own parent: no loop
+        self.assertEqual([p.pid for p in walk_chain(7, table.get)], [7])  # parent vanished mid-walk
+        self.assertEqual(walk_chain(1, {1: proc(1, 0, "launchd")}.get), [])
+        self.assertEqual(walk_chain(42, table.get), [])
+        # Procs and every fake built on it walk the same way.
+        self.assertEqual([p.pid for p in FakeProcs(*table.values()).ancestors(30)], [30, 20, 10])
 
     def test_real_ps_ancestors_start_with_this_process(self):
         chain = Procs().ancestors(os.getpid())
