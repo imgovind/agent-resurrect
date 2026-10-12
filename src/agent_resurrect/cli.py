@@ -643,13 +643,29 @@ def _search(text: str, limit: int) -> List[Tuple[AgentAdapter, Candidate]]:
     return found[:limit]
 
 
-def _print_others(found: List[Tuple[AgentAdapter, Candidate]]) -> None:
+def _coverage(found: Candidate) -> float:
+    return found.hits / max(found.total_probes, 1)
+
+
+def _contenders(found: List[Tuple[AgentAdapter, Candidate]]) -> List[Tuple[AgentAdapter, Candidate]]:
+    """The runners-up worth listing: those matching at least half as many probes as the best. A session that
+    shares a line or two of the text (a subagent the session started, or another session the text was pasted
+    into) is no rival to a match on most probes, and listing it only invites resuming the wrong one. --json
+    still lists every candidate."""
     if len(found) < 2:
+        return []
+    best = _coverage(found[0][1])
+    return [item for item in found[1:] if 2 * _coverage(item[1]) >= best]
+
+
+def _print_others(found: List[Tuple[AgentAdapter, Candidate]]) -> None:
+    others = _contenders(found)
+    if not others:
         return
     # Unnumbered on purpose: `resume <n>` takes numbers from `ls`, so a number here would resume another
     # session. Each candidate starts with its session id, which is what `resume` should be given.
     print("\nOther candidates:")
-    for _, c in found[1:]:
+    for _, c in others:
         when = _local_time(iso=c.info.started) or _local_time(epoch=c.info.last_active) or ""
         title = _one_line(c.info.title or c.info.first_prompt, 60)
         _say(f"  {c.session_id}  {c.hits}/{c.total_probes}  [{_roles(c.roles)}]  {when}  {title}".rstrip())

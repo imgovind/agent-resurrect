@@ -11,7 +11,7 @@ import sys
 import tempfile
 import types
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -575,9 +575,43 @@ class CliFindTest(CliCase):
         self.assertIn("agent-resurrect resume <session id>", out)
         self.assertEqual(self.launched, [])
 
+    def test_a_decisive_match_is_shown_alone(self):
+        # A match on every probe against sessions that share one line of the text (a subagent the session
+        # started, or a session the text was pasted into) is one answer, not a choice: list nobody else.
+        best = replace(candidate("s-9", None, hits=10), total_probes=10)
+        noise = [replace(candidate(f"s-{n}", None, hits=1, title=f"Noise {n}"), total_probes=10) for n in (1, 2, 3)]
+        self.use_results(best, *noise)
+        code, out, _ = self.run_cli("find", "some words here")
+        self.assertEqual(code, OK)
+        self.assertIn("BEST MATCH  (10/10 probes", out)
+        self.assertNotIn("Other candidates", out)
+        self.assertNotIn("resume <session id>", out)
+        for n in (1, 2, 3):
+            self.assertNotIn(f"s-{n}", out)
+
+    def test_close_runners_up_are_still_listed(self):
+        best = replace(candidate("s-9", None, hits=10), total_probes=10)
+        close = replace(candidate("s-8", None, hits=5), total_probes=10)   # half the best: a real contender
+        far = replace(candidate("s-7", None, hits=4), total_probes=10)     # under half: not one
+        self.use_results(best, close, far)
+        code, out, _ = self.run_cli("find", "some words here")
+        self.assertEqual(code, OK)
+        self.assertIn("Other candidates:", out)
+        self.assertIn("\n  s-8  5/10", out)
+        self.assertNotIn("s-7", out)
+
+    def test_json_still_lists_every_candidate(self):
+        best = replace(candidate("s-9", None, hits=10), total_probes=10)
+        noise = replace(candidate("s-1", None, hits=1), total_probes=10)
+        self.use_results(best, noise)
+        code, out, _ = self.run_cli("find", "--json", "some words here")
+        doc = json.loads(out)
+        self.assertEqual(code, OK)
+        self.assertEqual([m["session"]["session_id"] for m in doc["candidates"]], ["s-9", "s-1"])
+
     def test_find_candidates_are_not_numbered(self):
         # P0-2: "resume 2" means the second ls entry, so find must not print numbers an agent could reuse.
-        self.use_results(candidate("s-9", None), candidate("s-8", None, hits=2), candidate("s-7", None, hits=1))
+        self.use_results(candidate("s-9", None), candidate("s-8", None, hits=2), candidate("s-7", None, hits=2))
         code, out, _ = self.run_cli("find", "some words here")
         self.assertEqual(code, OK)
         self.assertNotRegex(out, re.compile(r"^\s*\d+[.)]\s", re.MULTILINE))

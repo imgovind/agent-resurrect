@@ -191,6 +191,25 @@ class HereFallbackTest(PaneCase):
         self.assertEqual((code, self.launched), (BUSY, []))
         self.assertIn("still running", err)
 
+    def test_a_decisive_match_from_the_pane_is_offered_alone(self):
+        # The case that prompted this: the pane's own session matched every probe, and its subagents and the
+        # session the text had been pasted into matched one each. Only the pane's session is shown.
+        from dataclasses import replace
+        best = replace(candidate("s-found", "/tmp", hits=10), total_probes=10)
+        noise = [replace(candidate(f"s-sub{n}", "/tmp", hits=1), total_probes=10) for n in (1, 2, 3, 4)]
+
+        class Decisive(FindingAgent):
+            def find_by_text(self, text, exclude=None, limit=5):
+                return [best, *noise]
+
+        self.use(PaneTerminal(SCROLLBACK), Decisive())
+        code, out, _ = self.run_cli(stdin="y\nn\n", tty=True)
+        self.assertEqual(code, OK)
+        self.assertIn("s-found", out)
+        self.assertNotIn("s-sub", out)
+        self.assertNotIn("Other candidates", out)
+        self.assertIn("Resume it here? [Y/n]", out)
+
     def test_no_match(self):
         self.use(PaneTerminal("just an ordinary line of shell output with nothing relevant in it"), FindingAgent())
         code, out, _ = self.run_cli(stdin="y\n", tty=True)
