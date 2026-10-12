@@ -3,9 +3,14 @@
 `auto` runs on the first prompt of a new shell in a pane that has a record (see shell/). It never
 reads input unless stdin and stdout are both terminals, and it resumes by exec-ing the agent so that
 no Python parent survives to catch Ctrl-C or Ctrl-Z meant for the agent.
+
+Nothing here launches an agent without a terminal on stdin and stdout: `resume_record` prints the
+command instead and returns NEEDS_TTY. A live record is taken with `store.claim` (atomic, exactly one
+winner) immediately before launching, so two shells that read the same record never both launch it.
 """
 import math
 import os
+import re
 import select
 import shlex
 import signal
@@ -14,11 +19,11 @@ import termios
 import time
 import traceback
 import tty
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Mapping, Optional
+from typing import Callable, Dict, List, Mapping, Optional, Union
 
-from . import logs, paths, store
+from . import exitcodes, logs, paths, store
 from .agents import get_agent
 from .agents.base import AgentAdapter
 from .config import Config, load_config
@@ -34,8 +39,14 @@ TOO_OLD = "too-old"
 AGENT_RUNNING = "agent-running"
 SESSION_GONE = "session-gone"
 
+# Restore events (restores.jsonl) besides the decision reasons above.
+RESUMED = "resumed"
+LOST_RACE = "lost-race"          # another shell claimed the record first; this one stays quiet
+LAUNCH_FAILED = "launch-failed"
+
 SKIP_HINT = 'Skipped. Run "agent-resurrect" in this pane to resume it later.'
 TITLE_WIDTH = 60
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Python starts with these ignored, and an ignored disposition survives exec. subprocess resets them
 # in its children (restore_signals=True); a bare exec has to do the same.
@@ -54,18 +65,34 @@ class ResumePlan:
     argv: List[str]
     cwd: Optional[str]       # directory to start in; None means stay in the current one
     warning: Optional[str]   # shown before launching, e.g. the recorded directory is gone
+    # Variables the agent gets on top of this process's environment, e.g. the CLAUDE_CONFIG_DIR its session
+    # was recorded under (Record.resume_env). Without it, a session from a second account resumes in the first.
+    env: Dict[str, str] = field(default_factory=dict)
 
 
 def check_eligible(record: Record, agent: AgentAdapter, procs: Procs, config: Config,
                    now: Optional[datetime] = None, require_live: bool = True) -> Decision:
     """Spec section 7, checked in a fixed order so the reason is predictable. Manual commands pass
     require_live=False to resume a consumed or skipped record."""
+    return _decide(record, agent, procs, config, now, require_live=require_live, check_running=True)
+
+
+def simulate(record: Record, agent: AgentAdapter, procs: Procs, config: Config, assume_restart: bool = False,
+             now: Optional[datetime] = None) -> Decision:
+    """The decision `auto` would make for this record, with no terminal, no launch and no change to any state.
+    With assume_restart, as if the Mac had just restarted: a restart ends every agent process, so the
+    agent-running step is skipped and every other rule still applies."""
+    return _decide(record, agent, procs, config, now, require_live=True, check_running=not assume_restart)
+
+
+def _decide(record: Record, agent: AgentAdapter, procs: Procs, config: Config, now: Optional[datetime], *,
+            require_live: bool, check_running: bool) -> Decision:
     if require_live and record.status != STATUS_LIVE:
         return Decision(False, NOT_LIVE)
     updated = parse_iso(record.updated_at)  # unparseable: never judged too old on a guess (as store.gc)
     if updated is not None and updated < (now or datetime.now(timezone.utc)) - timedelta(days=config.max_age_days):
         return Decision(False, TOO_OLD)
-    if procs.is_alive(record.agent_pid, record.agent_started):
+    if check_running and procs.is_alive(record.agent_pid, record.agent_started):
         return Decision(False, AGENT_RUNNING)
     if not agent.session_exists(record):
         return Decision(False, SESSION_GONE)
@@ -74,19 +101,46 @@ def check_eligible(record: Record, agent: AgentAdapter, procs: Procs, config: Co
 
 def plan_resume(record: Record, agent: AgentAdapter, config: Config) -> ResumePlan:
     argv = list(agent.resume_argv(record, config))
+    env = _resume_env(record)
     if record.cwd and os.path.isdir(record.cwd):
-        return ResumePlan(argv, record.cwd, None)
+        return ResumePlan(argv, record.cwd, None, env)
     warning = None
     if record.cwd:
         warning = (f"working directory {printable(record.cwd)} no longer exists; "
                    "resuming from the current directory")
-    return ResumePlan(argv, None, warning)
+    return ResumePlan(argv, None, warning, env)
+
+
+def _exportable(name: object, value: object) -> bool:
+    """A variable a shell can set as NAME=value and exec can pass: a plain name, a string without NUL."""
+    return (isinstance(name, str) and bool(_ENV_NAME.fullmatch(name))
+            and isinstance(value, str) and "\0" not in value)
+
+
+def _resume_env(record: Record) -> Dict[str, str]:
+    """A copy of the record's resume_env without entries that cannot be exported. Records are files on disk,
+    so a hand-edited one must neither put shell text into a printed command nor make exec raise."""
+    recorded = record.resume_env
+    if not recorded:
+        return {}
+    if not isinstance(recorded, dict):
+        logs.log(f"restore: ignoring resume_env of {record.session_id!r}: not a mapping")
+        return {}
+    env = {}
+    for name, value in recorded.items():
+        if _exportable(name, value):
+            env[name] = value
+        else:
+            logs.log(f"restore: ignoring resume_env entry {name!r} of {record.session_id!r}")
+    return env
 
 
 def format_command(plan: ResumePlan) -> str:
-    """A copy-paste ready shell command, e.g. "cd '/a b' && claude --resume x". Safe to print: it never
-    contains a raw control character, yet the shell still gets every value exactly."""
-    command = " ".join(_quote(part) for part in plan.argv)
+    """A copy-paste ready shell command, e.g. "cd '/a b' && CLAUDE_CONFIG_DIR=/x claude --resume x". Safe to
+    print: it never contains a raw control character, yet the shell still gets every value exactly."""
+    words = [f"{name}={_quote(plan.env[name])}" for name in sorted(plan.env) if _exportable(name, plan.env[name])]
+    words.extend(_quote(part) for part in plan.argv)
+    command = " ".join(words)
     return f"cd {_quote(plan.cwd)} && {command}" if plan.cwd else command
 
 
@@ -115,9 +169,13 @@ def launch(plan: ResumePlan) -> None:
 
     exec, never subprocess: the agent must be the shell's foreground job itself, with no Python
     parent left to die on Ctrl-C and hand the terminal back to the shell while the agent runs on.
+    The agent gets this process's environment with the plan's variables on top; PATH lookup uses that
+    same environment.
     """
     if plan.cwd:
         os.chdir(plan.cwd)
+    env = dict(os.environ)
+    env.update((name, value) for name, value in plan.env.items() if _exportable(name, value))
     for stream in (sys.stdout, sys.stderr):  # exec discards anything still buffered
         try:
             stream.flush()
@@ -125,7 +183,7 @@ def launch(plan: ResumePlan) -> None:
             pass
     previous = [(signum, signal.signal(signum, signal.SIG_DFL)) for signum in _SIGNALS_TO_RESET]
     try:
-        os.execvp(plan.argv[0], plan.argv)
+        os.execvpe(plan.argv[0], plan.argv, env)
     except OSError:
         for signum, handler in previous:
             if handler is not None:
@@ -188,74 +246,120 @@ def ask_yes_no(prompt: str, stdin=None, stdout=None) -> bool:
     return answer.strip().lower() in ("", "y", "yes")
 
 
-def resume_record(record: Record, agent: AgentAdapter, config: Config, *, stdout=None,
-                  launcher: Callable[[ResumePlan], None] = launch, announce: bool = True) -> int:
-    """Resume one record in this terminal. Marks the pane's record consumed first, so a crash loop
-    cannot re-trigger it; puts the old status back if the agent cannot be started."""
+def has_terminal(stdin=None, stdout=None, isatty: Union[None, bool, Callable[[object], bool]] = None) -> bool:
+    """True if stdin and stdout are both terminals, the condition for launching an agent or asking anything.
+    `isatty` checks one stream (default: its isatty() method); a plain bool decides by itself (a caller that
+    has already checked). Streams default to sys.stdin and sys.stdout, looked up now."""
+    if isinstance(isatty, bool):
+        return isatty
+    check = isatty or _isatty
+    return bool(check(stdin if stdin is not None else sys.stdin)) and \
+        bool(check(stdout if stdout is not None else sys.stdout))
+
+
+def resume_record(record: Record, agent: AgentAdapter, config: Config, *, stdin=None, stdout=None,
+                  launcher: Optional[Callable[[ResumePlan], None]] = None, announce: bool = True,
+                  isatty: Union[None, bool, Callable[[object], bool]] = None) -> int:
+    """Resume one record in this terminal; returns an exitcodes value when it does not exec.
+
+    Without a terminal (see has_terminal) it launches nothing: it prints the command to run and returns
+    NEEDS_TTY, changing no state and logging no event. Otherwise a stored, live record of this session is
+    claimed first (atomically marked consumed, so neither a crash loop nor a second shell can launch it again)
+    and a lost claim returns BUSY. Records that are not stored, or not live, are launched without a claim.
+    If the agent cannot be started, a claimed record becomes skipped, not live, so that new shells do not
+    retry it forever. `launcher` defaults to `launch`, looked up when called so that it can be replaced."""
     out = stdout if stdout is not None else sys.stdout
     plan = plan_resume(record, agent, config)
+    if not has_terminal(stdin, out, isatty):
+        print(f"agent-resurrect: not starting {printable(plan.argv[0])} without a terminal. "
+              "To resume, run this in a terminal:", file=out)
+        if plan.warning:
+            print(plan.warning, file=out)
+        print(f"  {format_command(plan)}", file=out)
+        return exitcodes.NEEDS_TTY
+    claimed = False
+    if _stored_status(record) == STATUS_LIVE:
+        if _claim(record) is None:
+            store.append_restore_event(record.pane_key, LOST_RACE, record.session_id)
+            print("agent-resurrect: another shell is already resuming this session.", file=out)
+            return exitcodes.BUSY
+        claimed = True
     if announce:
-        print(f'Resurrecting "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}', file=out)
+        _announce(record, agent, out)
+    return _launch(record, plan, out, launcher or launch, claimed)
+
+
+def _launch(record: Record, plan: ResumePlan, out, launcher: Callable[[ResumePlan], None], claimed: bool) -> int:
     key = record.pane_key
-    previous = _stored_status(record)
-    if previous is not None:
-        store.set_status(key, STATUS_CONSUMED)
-    store.append_restore_event(key, "resumed", record.session_id)
+    store.append_restore_event(key, RESUMED, record.session_id)
     if plan.warning:
         print(plan.warning, file=out)
     out.flush()
     try:
         launcher(plan)
     except OSError as exc:
-        print(f"agent-resurrect: could not start {printable(plan.argv[0])}: {printable(exc)}", file=out)
-        if previous is not None:
-            store.set_status(key, previous)
-        store.append_restore_event(key, "launch-failed", f"{record.session_id}: {exc}")
-        return 1
-    return 0
+        program = printable(plan.argv[0])
+        print(f"agent-resurrect: could not start {program}: {printable(exc)}", file=out)
+        print(f"When {program} is on your PATH, resume with: agent-resurrect resume {_quote(record.session_id)}",
+              file=out)
+        if claimed and _stored_status(record) is not None:
+            store.set_status(key, STATUS_SKIPPED)
+        store.append_restore_event(key, LAUNCH_FAILED, f"{record.session_id}: {exc}")
+        return exitcodes.ERROR
+    return exitcodes.OK
+
+
+def _claim(record: Record) -> Optional[Record]:
+    """Take this pane's live record for `record`'s session (store.claim: exactly one process wins), else None."""
+    claimed = store.claim(record.pane_key)
+    if claimed is not None and claimed.session_id != record.session_id:
+        # A newer session was recorded in this pane after `record` was read: not ours to take.
+        store.set_status(record.pane_key, STATUS_LIVE)
+        return None
+    return claimed
 
 
 def auto(env: Mapping[str, str], *, terminal: Optional[TerminalAdapter] = None,
          agent_lookup: Optional[Callable[[str], Optional[AgentAdapter]]] = None, procs: Optional[Procs] = None,
          config: Optional[Config] = None, stdin=None, stdout=None,
          keypress: Callable[..., bool] = wait_for_key, ask: Callable[..., bool] = ask_yes_no,
-         launcher: Callable[[ResumePlan], None] = launch, isatty: Optional[Callable[[object], bool]] = None,
+         launcher: Optional[Callable[[ResumePlan], None]] = None, isatty: Optional[Callable[[object], bool]] = None,
          now: Optional[datetime] = None) -> int:
     """First-prompt restore for this pane. Silent unless it has something to offer on a terminal."""
     terminal = terminal or detect_terminal(env)
     key = terminal.pane_key(env) if terminal is not None else None
     if not key or not store.valid_pane_key(key):
-        return 0
+        return exitcodes.OK
     record = store.load(key)
     if record is None:
-        return 0
+        return exitcodes.OK
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
-    isatty = isatty or _isatty
-    if not (isatty(stdin) and isatty(stdout)):
+    if not has_terminal(stdin, stdout, isatty):
         store.append_restore_event(key, "not-a-tty", record.session_id)
-        return 0
+        return exitcodes.OK
     try:
         return _auto_on_terminal(record, agent_lookup or get_agent, procs or Procs(), config or load_config(),
-                                 stdin, stdout, keypress, ask, launcher, now)
+                                 stdin, stdout, keypress, ask, launcher or launch, now)
     except KeyboardInterrupt:
         stdout.write("\n")
-        return 130
+        return exitcodes.INTERRUPTED
     except Exception as exc:  # a shell's first prompt must never show a traceback
         logs.log(f"restore: auto failed for {key}: {exc!r}\n{traceback.format_exc()}")
         print(f"agent-resurrect: could not restore this pane ({printable(exc)}); see {printable(paths.log_path())}",
               file=stdout)
-        return 1
+        return exitcodes.ERROR
 
 
 def _auto_on_terminal(record: Record, agent_lookup, procs: Procs, config: Config, stdin, stdout,
                       keypress, ask, launcher, now) -> int:
     key = record.pane_key
-    store.gc(config.max_age_days)
+    # A session can run for weeks without a new SessionStart; its record must outlive the age limit.
+    store.gc(config.max_age_days, is_running=lambda r: procs.is_alive(r.agent_pid, r.agent_started))
     agent = agent_lookup(record.agent)
     if agent is None:
         store.append_restore_event(key, "unknown-agent", record.agent)
-        return 0
+        return exitcodes.OK
     decision = check_eligible(record, agent, procs, config, now=now)
     if not decision.eligible:
         if decision.reason == SESSION_GONE:
@@ -264,14 +368,16 @@ def _auto_on_terminal(record: Record, agent_lookup, procs: Procs, config: Config
                   "no longer exists; forgetting it.", file=stdout)
             store.delete(key)
         store.append_restore_event(key, decision.reason, record.session_id)
-        return 0
+        return exitcodes.OK
 
     mode = config.auto_resume
+    plan = plan_resume(record, agent, config)  # before any claim: if it raises, the record stays live
     if mode == "off":
-        print(f"agent-resurrect: resume with: {format_command(plan_resume(record, agent, config))}", file=stdout)
-        store.set_status(key, STATUS_CONSUMED)
+        if _claim(record) is None:
+            return _lost_race(record)
+        print(f"agent-resurrect: resume with: {format_command(plan)}", file=stdout)
         store.append_restore_event(key, "offered", record.session_id)
-        return 0
+        return exitcodes.OK
     if mode == "ask":
         question = f'Resurrect "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}?'
         if not ask(question, stdin=stdin, stdout=stdout):
@@ -282,16 +388,31 @@ def _auto_on_terminal(record: Record, agent_lookup, procs: Procs, config: Config
         stdout.flush()
         if keypress(config.countdown_seconds, stdin=stdin, stdout=stdout):
             return _skip(record, stdout)
+    # Claimed only now, after the countdown or question: every shell that read the record live got this far,
+    # and exactly one of them may launch it.
+    if _claim(record) is None:
+        return _lost_race(record)
     # Countdown and ask have already named the session; only immediate announces it here.
-    return resume_record(record, agent, config, stdout=stdout, launcher=launcher,
-                         announce=(mode == "immediate"))
+    if mode == "immediate":
+        _announce(record, agent, stdout)
+    return _launch(record, plan, stdout, launcher, claimed=True)
+
+
+def _lost_race(record: Record) -> int:
+    """Another shell claimed this pane's record first and is resuming it: say nothing, launch nothing."""
+    store.append_restore_event(record.pane_key, LOST_RACE, record.session_id)
+    return exitcodes.OK
 
 
 def _skip(record: Record, stdout) -> int:
     store.set_status(record.pane_key, STATUS_SKIPPED)
     store.append_restore_event(record.pane_key, "skipped", record.session_id)
     print(SKIP_HINT, file=stdout)
-    return 0
+    return exitcodes.OK
+
+
+def _announce(record: Record, agent: AgentAdapter, out) -> None:
+    print(f'Resurrecting "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}', file=out)
 
 
 def _stored_status(record: Record) -> Optional[str]:
