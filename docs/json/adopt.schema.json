@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/adopt.schema.json",
+  "title": "agent-resurrect adopt --json",
+  "description": "Record the agent session this command runs inside (run it from the agent's own shell tool), for sessions started before agent-resurrect was installed. Exit 3 when not inside a recordable session in a supported terminal pane.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.adopt/1"},
+    "recorded": {"type": "boolean"},
+    "pane": {"anyOf": [{"$ref": "pane.schema.json"}, {"type": "null"}]},
+    "session": {"anyOf": [{"$ref": "session.schema.json"}, {"type": "null"}]}
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["recorded", "pane", "session"]}
+}

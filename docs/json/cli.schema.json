@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/cli.schema.json",
+  "title": "agent-resurrect usage error",
+  "description": "Printed for --json when the command itself is unknown (exit 2). Argument errors of a known command use that command's schema with the envelope only.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {"schema": {"const": "agent-resurrect.cli/1"}}
+}

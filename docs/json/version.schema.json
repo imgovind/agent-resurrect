@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/version.schema.json",
+  "title": "agent-resurrect version --json",
+  "description": "The tool version (in the envelope's version field) and where it runs.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.version/1"},
+    "python": {"type": "string", "description": "e.g. 3.9.6"},
+    "executable": {"$ref": "envelope.schema.json#/$defs/path"},
+    "package_dir": {"$ref": "envelope.schema.json#/$defs/path"}
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["python", "executable", "package_dir"]}
+}

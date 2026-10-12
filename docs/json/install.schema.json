@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/install.schema.json",
+  "title": "agent-resurrect install --json",
+  "description": "Apply the settings agent-resurrect needs. Without --yes it needs confirmation: with --json, or without a terminal, it exits 4 instead of asking. --dry-run changes nothing (statuses would-change, unchanged, skipped). Exit 1 when any step failed.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.install/1"},
+    "dry_run": {"type": "boolean"},
+    
+    "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "manifest_path": {"$ref": "envelope.schema.json#/$defs/path"},
+    "log_path": {"$ref": "envelope.schema.json#/$defs/path"},
+    "next_steps": {"type": "array", "items": {"$ref": "#/$defs/next_step"}}
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["dry_run", "steps", "manifest_path", "log_path", "next_steps"]},
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["id", "status", "description", "detail"],
+      "properties": {
+        "id": {"type": "string", "description": "a setting id such as iterm.restore_policy, or files"},
+        "status": {"enum": ["changed", "unchanged", "skipped", "failed", "reverted", "would-change", "would-revert"]},
+        "description": {"type": "string"},
+        "detail": {"type": "string"}
+      }
+    },
+    "next_step": {
+      "type": "object",
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": {"enum": ["new-shell", "restart-agent", "command", "user-action"]},
+        "text": {"type": "string"}
+      }
+    }
+  }
+}

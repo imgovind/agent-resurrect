@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/doctor.schema.json",
+  "title": "agent-resurrect doctor --json",
+  "description": "Every check a restore depends on. Exit 1 when a check failed (or warned, with --strict). ready is true when every setting check is ok and the plugin is enabled; warnings about PATH or the current terminal do not affect it. fix.kind: command (the agent may run argv once, then re-run doctor), new-shell (fixes itself in a new terminal tab), restart-agent (restart running agent sessions or run /reload-plugins), user-action (a GUI step or System Settings), install-app (iTerm2, Claude Code, Command Line Tools: ask the user first).",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.doctor/1"},
+    "ready": {"type": "boolean"},
+    "summary": {
+      "type": "object",
+      "required": ["ok", "warn", "fail"],
+      "properties": {
+        "ok": {"type": "integer", "minimum": 0},
+        "warn": {"type": "integer", "minimum": 0},
+        "fail": {"type": "integer", "minimum": 0}
+      }
+    },
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}},
+    "context": {
+      "type": "object",
+      "required": ["terminal", "pane_key", "launcher", "log_path", "boot_time"],
+      "properties": {
+        "terminal": {"type": ["string", "null"]},
+        "pane_key": {"type": ["string", "null"]},
+        "launcher": {"$ref": "envelope.schema.json#/$defs/path"},
+        "log_path": {"$ref": "envelope.schema.json#/$defs/path"},
+        "boot_time": {"$ref": "envelope.schema.json#/$defs/timestamp"}
+      }
+    },
+    "records": {
+      "type": "object",
+      "required": ["total", "live", "restorable", "died_since_boot"],
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "since_boot": {
+      "description": "restore events since the last boot, by result",
+      "type": "object",
+      "required": ["resumed", "skipped", "launch-failed", "offered", "not-a-tty"],
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    }
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["ready", "summary", "checks", "context", "records", "since_boot"]},
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["id", "status", "detail", "fix"],
+      "properties": {
+        "id": {"type": "string", "description": "stable: python, launcher.on_path, every setting id, terminal.pane, records, restores.since_boot, ..."},
+        "status": {"enum": ["ok", "warn", "fail"]},
+        "detail": {"type": "string"},
+        "fix": {"anyOf": [{"$ref": "#/$defs/fix"}, {"type": "null"}]}
+      }
+    },
+    "fix": {
+      "type": "object",
+      "required": ["kind", "agent_may_run", "text", "argv"],
+      "properties": {
+        "kind": {"enum": ["command", "new-shell", "restart-agent", "user-action", "install-app"]},
+        "agent_may_run": {"type": "boolean"},
+        "text": {"type": "string"},
+        "argv": {"type": ["array", "null"], "items": {"type": "string"}}
+      }
+    }
+  }
+}
