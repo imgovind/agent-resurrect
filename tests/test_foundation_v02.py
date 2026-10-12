@@ -3,7 +3,6 @@ C-locale ps, exit codes and the --json envelope."""
 import io
 import json
 import os
-import re
 import stat
 import subprocess
 import sys

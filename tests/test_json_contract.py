@@ -6,7 +6,6 @@ The validator below is a deliberately small subset of JSON Schema 2020-12 (type,
 minimum, minItems, required, properties, additionalProperties, items, allOf, anyOf, if/then/else, $ref to a
 sibling file or a #/$defs fragment): enough for the schemas this project publishes, with no dependency.
 """
-import inspect
 import json
 import os
 import re
@@ -164,7 +163,7 @@ class SchemaFilesTest(unittest.TestCase):
             self.assertIn(getattr(restore, name), reasons)
 
     def test_doctor_schema_allows_unknown_boot_time_and_open_check_ids(self):
-        document = standin_doctor_document()
+        document = sample_doctor_document()
         document.update(since_boot=None, records=dict(document["records"], died_since_boot=None))
         document["context"].update(login_shell="/bin/zsh", multiplexer=None)
         document["checks"].append({"id": "shell.exec_before_block", "status": "warn", "detail": "x", "fix": None})
@@ -403,14 +402,19 @@ class ResumeContractTest(ContractCase):
         self.assertEqual(snapshot_state(), before)
         self.assertEqual(self.launched, [])
 
-    def test_without_a_terminal_refuses_and_changes_nothing(self):
+    def test_json_implies_print_with_or_without_a_terminal(self):
+        """Lead ruling for 0.2.0: --json never launches. It prints one document with action "printed" and exit 0,
+        exactly as --json --print does, whether or not stdin and stdout are terminals."""
         put(make_record(), 5)
         before = snapshot_state()
-        for argv in (("resume", "s-1"), ("here",), ()):
-            document = self.contract(*argv, "--json", code=NEEDS_TTY)
-            self.assertEqual(document["action"], "refused")
-            self.assertEqual(document["session"]["resume"]["argv"], ["fake-agent", "--resume", "s-1"])
-        self.assertEqual(snapshot_state(), before)
+        for tty in (False, True):
+            for argv, command in ((("resume", "s-1"), "resume"), (("resume", "1"), "resume"), (("here",), "here"),
+                                  ((), "here")):
+                document = self.contract(*argv, "--json", code=OK, command=command, tty=tty)
+                self.assertEqual(document["action"], "printed", (argv, tty))
+                self.assertEqual(document["session"]["resume"]["argv"], ["fake-agent", "--resume", "s-1"])
+                self.assertEqual(document["session"]["resume"]["command"], "cd /tmp && fake-agent --resume s-1")
+        self.assertEqual(snapshot_state(), before)  # nothing claimed, no restore event
         self.assertEqual(self.launched, [])
 
     def test_refusals(self):
@@ -435,20 +439,6 @@ class ResumeContractTest(ContractCase):
         self.assertIsNone(self.contract("here", "--json", code=NOT_FOUND)["pane"])
         self.contract("resume", "", "--json", code=USAGE)
         self.contract("resume", "--json", code=USAGE)
-
-    def test_on_a_terminal_it_launches(self):
-        # The process is replaced by the agent, so "launched" is only ever printed when a launcher returns.
-        put(make_record(), 5)
-        document = self.contract("resume", "s-1", "--json", code=OK, tty=True)
-        self.assertEqual(document["action"], "launched")
-        self.assertEqual([plan.argv for plan in self.launched], [["fake-agent", "--resume", "s-1"]])
-
-    def test_failed_launch(self):
-        put(make_record(), 5)
-        with mock.patch.object(restore, "launch", side_effect=OSError("No such file or directory")):
-            document = self.contract("here", "--json", code=ERROR, tty=True)
-        self.assertEqual(document["action"], "launch-failed")
-
 
 class SimulateContractTest(ContractCase):
     def test_panes(self):
@@ -562,8 +552,8 @@ class FakeSetting(Setting):
         pass
 
 
-def standin_doctor_document() -> dict:
-    """The v0.2 plan's doctor --json shape (T4)."""
+def sample_doctor_document() -> dict:
+    """A minimal doctor --json document, for checking the schema itself."""
     return jsonout.document(
         "doctor", ready=True, summary={"ok": 1, "warn": 0, "fail": 0},
         checks=[{"id": "python", "status": "ok", "detail": "python 3", "fix": None}],
@@ -572,31 +562,23 @@ def standin_doctor_document() -> dict:
         since_boot={"resumed": 0, "skipped": 0, "launch-failed": 0, "offered": 0, "not-a-tty": 0})
 
 
-def standin_doctor_run(out=None, *, procs=None, boot_time=None, as_json=False, strict=False):
-    """Used only while doctor.py lacks as_json."""
-    jsonout.emit(standin_doctor_document(), out)
-    return OK
-
-
 class DoctorContractTest(ContractCase):
     def test_doctor(self):
         real_run = doctor.run
-        if "as_json" in inspect.signature(real_run).parameters:
-            os.environ["PATH"] = f"{REPO / 'tests' / 'fakes'}{os.pathsep}{os.environ.get('PATH', '')}"
-            os.environ["FAKE_DEFAULTS_DB"] = str(self.home / "defaults.json")
-            os.environ["FAKE_CLAUDE_DB"] = str(self.home / "claude.json")
-            put(make_record(agent_pid=None), 5)
-            for patch in (mock.patch.object(doctor, "all_settings", lambda: [FakeSetting()]),
-                          mock.patch.object(doctor, "detect_terminal",
-                                            lambda env: FakeTerminal() if FakeTerminal().detect(env) else None),
-                          mock.patch.object(doctor, "get_agent", lambda name: self.agent if name == "fake" else None)):
-                patch.start()
-                self.addCleanup(patch.stop)
+        os.environ["PATH"] = f"{REPO / 'tests' / 'fakes'}{os.pathsep}{os.environ.get('PATH', '')}"
+        os.environ["FAKE_DEFAULTS_DB"] = str(self.home / "defaults.json")
+        os.environ["FAKE_CLAUDE_DB"] = str(self.home / "claude.json")
+        put(make_record(agent_pid=None), 5)
+        for patch in (mock.patch.object(doctor, "all_settings", lambda: [FakeSetting()]),
+                      mock.patch.object(doctor, "detect_terminal",
+                                        lambda env: FakeTerminal() if FakeTerminal().detect(env) else None),
+                      mock.patch.object(doctor, "get_agent", lambda name: self.agent if name == "fake" else None)):
+            patch.start()
+            self.addCleanup(patch.stop)
 
-            def run(**kwargs):
-                return real_run(procs=FakeProcs(), boot_time=time.time() - 3600, **kwargs)
-        else:
-            run = standin_doctor_run
+        def run(**kwargs):
+            return real_run(procs=FakeProcs(), boot_time=time.time() - 3600, **kwargs)
+
         with mock.patch.object(cli, "doctor", types.SimpleNamespace(run=run)):
             for flags in ((), ("--strict",)):
                 document = self.contract("doctor", "--json", *flags, code=None)

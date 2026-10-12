@@ -1,11 +1,5 @@
-"""Tests for the command line. Agents, terminals and processes are faked; nothing is ever launched.
-
-restore.py (T1), installer.py (T6), doctor.py (T4) and agents/claude.py (T2) change in parallel with this
-file. Where the real function this CLI calls is not there yet, a stand-in that follows the v0.2 plan's
-contract is patched in, conditionally, so the same tests run against the real modules after integration.
-"""
+"""Tests for the command line. Agents, terminals and processes are faked; nothing is ever launched."""
 import contextlib
-import inspect
 import io
 import json
 import os
@@ -25,62 +19,17 @@ from unittest import mock
 import agent_resurrect
 from agent_resurrect import cli, exitcodes, paths, restore, store
 from agent_resurrect.config import Config
-from agent_resurrect.model import ISO_FORMAT, STATUS_LIVE, STATUS_SKIPPED, Candidate, Record, SessionInfo
+from agent_resurrect.model import ISO_FORMAT, STATUS_LIVE, Candidate, Record, SessionInfo
 from agent_resurrect.settings.base import Check, Setting
 from tests.helpers import FakeAgent, FakeProcs, FakeTerminal, make_record, proc, temp_home
 
 PACKAGE_DIR = Path(agent_resurrect.__file__).resolve().parent
 REPO = PACKAGE_DIR.parent.parent
-# T5 moves the entry point from bin/ to libexec/ (bin/ then holds a POSIX sh wrapper without the .py).
-ENTRY_CANDIDATES = (REPO / "libexec" / "agent-resurrect.py", REPO / "bin" / "agent-resurrect.py")
-ENTRY = next((path for path in ENTRY_CANDIDATES if path.is_file()), ENTRY_CANDIDATES[-1])
+# The Python entry point; bin/agent-resurrect is the POSIX sh wrapper that runs it.
+ENTRY = REPO / "libexec" / "agent-resurrect.py"
 
 OK, ERROR, USAGE, NOT_FOUND = exitcodes.OK, exitcodes.ERROR, exitcodes.USAGE, exitcodes.NOT_FOUND
 NEEDS_TTY, BUSY, GONE = exitcodes.NEEDS_TTY, exitcodes.BUSY, exitcodes.GONE
-
-
-# ---------------------------------------------------------------------------------------------- stand-ins
-
-def standin_resume_record(record, agent, config, *, stdout=None, launcher=None, announce=True, isatty=None):
-    """The v0.2 plan's contract for restore.resume_record (T1: A1, H2, M4), used only while restore.py
-    lacks the isatty keyword. Without a terminal: print the command, change nothing, return NEEDS_TTY."""
-    out = stdout if stdout is not None else sys.stdout
-    plan = restore.plan_resume(record, agent, config)
-    check = isatty or restore._isatty
-    if not (check(sys.stdin) and check(out)):
-        print(restore.format_command(plan), file=out)
-        return exitcodes.NEEDS_TTY
-    if announce:
-        print(f'Resurrecting "{record.session_id}"', file=out)
-    stored = store.load(record.pane_key) if store.valid_pane_key(record.pane_key) else None
-    ours = stored is not None and stored.session_id == record.session_id
-    if ours and stored.status == STATUS_LIVE:
-        store.claim(record.pane_key)
-    store.append_restore_event(record.pane_key, "resumed", record.session_id)
-    try:
-        (launcher or restore.launch)(plan)
-    except OSError as exc:
-        print(f"agent-resurrect: could not start {plan.argv[0]}: {exc}", file=out)
-        if ours:
-            store.set_status(record.pane_key, STATUS_SKIPPED)
-        store.append_restore_event(record.pane_key, "launch-failed", f"{record.session_id}: {exc}")
-        return exitcodes.ERROR
-    return exitcodes.OK
-
-
-def standin_simulate(record, agent, procs, config, assume_restart=False, now=None):
-    """The v0.2 plan's restore.simulate: check_eligible's rules; a restart stops every agent."""
-    return restore.check_eligible(record, agent, FakeProcs() if assume_restart else procs, config, now=now)
-
-
-def parallel_standins():
-    """Patches for functions other tasks add in parallel, only for those still missing here."""
-    patches = []
-    if "isatty" not in inspect.signature(restore.resume_record).parameters:
-        patches.append(mock.patch.object(restore, "resume_record", standin_resume_record))
-    if not hasattr(restore, "simulate"):
-        patches.append(mock.patch.object(restore, "simulate", standin_simulate, create=True))
-    return patches
 
 
 # ---------------------------------------------------------------------------------------------- fixtures
@@ -163,7 +112,6 @@ class CliCase(unittest.TestCase):
             mock.patch("os.chdir", side_effect=AssertionError("tests must never chdir")),
             *[mock.patch(f"os.{name}", side_effect=AssertionError("tests must never exec"))
               for name in ("execv", "execve", "execvp", "execvpe")],
-            *parallel_standins(),
         ]
         for patch in patches:
             started = patch.start()

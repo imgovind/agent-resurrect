@@ -28,7 +28,7 @@ from .agents import get_agent
 from .agents.base import AgentAdapter
 from .config import Config, load_config
 from .display import printable  # display only: format_command keeps exact values
-from .model import STATUS_CONSUMED, STATUS_LIVE, STATUS_SKIPPED, Record, parse_iso
+from .model import STATUS_LIVE, STATUS_SKIPPED, Record, parse_iso
 from .procs import Procs
 from .terminals import detect_terminal
 from .terminals.base import TerminalAdapter

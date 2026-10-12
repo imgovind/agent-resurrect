@@ -3,7 +3,8 @@
 Machine interface (review 03 "Machine interface spec", schemas in docs/json/): with --json a command prints
 exactly one ASCII JSON object (jsonout) and nothing else on stdout, never prompts (a needed confirmation is
 exit 4), and puts diagnostics on stderr. Every exit status is an exitcodes constant and error.code names it.
-resume and here never launch an agent unless stdin and stdout are both terminals.
+resume and here never launch an agent unless stdin and stdout are both terminals, and never with --json, which
+implies --print: the document carries the command to run (session.resume.command) and the exit status is 0.
 """
 import argparse
 import io
@@ -91,12 +92,6 @@ def _isatty(stream) -> bool:
         return bool(stream is not None and stream.isatty())
     except (AttributeError, OSError, ValueError):
         return False
-
-
-def _interactive() -> bool:
-    """Both stdin and stdout are terminals: the only condition under which an agent is launched or a
-    question is asked."""
-    return _isatty(sys.stdin) and _isatty(sys.stdout)
 
 
 # ---------------------------------------------------------------------------------------------------- hook
@@ -294,7 +289,8 @@ def cmd_ls(args: argparse.Namespace) -> int:
 
 def _resume(args: argparse.Namespace, command: str, record: Record) -> int:
     """Resume one record in this terminal, or print how to. Refusals (unknown agent, still running,
-    transcript gone) come first; then --print; then nothing is launched without a terminal."""
+    transcript gone) come first; then --print (which --json implies: a JSON caller is a program, so it gets the
+    command and nothing is launched); then nothing is launched without a terminal on stdin and stdout."""
     agent = get_agent(record.agent)
     cfg = load_config()
     pane = views.pane(record)
@@ -314,13 +310,10 @@ def _resume(args: argparse.Namespace, command: str, record: Record) -> int:
         return finish(BUSY, f"that session is still running (pid {record.agent_pid})", "refused")
     if decision.reason == restore.SESSION_GONE:
         return finish(GONE, f"session {record.session_id} no longer exists, so it cannot be resumed", "refused")
+    if args.json:
+        return finish(OK, None, "printed")  # session.resume.command is the command to run
     plan = restore.plan_resume(record, agent, cfg)
-    if args.print or not _interactive():
-        if args.json:
-            if args.print:
-                return finish(OK, None, "printed")
-            return finish(NEEDS_TTY, f"not launching {record.agent} without a terminal; run "
-                                     "session.resume.command in a terminal pane yourself", "refused")
+    if args.print or not restore.has_terminal():
         if plan.warning:
             _error(plan.warning)  # stderr: stdout carries the command alone, ready for $(...)
         if not args.print:
@@ -329,16 +322,8 @@ def _resume(args: argparse.Namespace, command: str, record: Record) -> int:
         _say(restore.format_command(plan))
         return OK if args.print else NEEDS_TTY
     # A terminal on both ends: hand it to the agent. restore.launch is looked up now, not bound as
-    # resume_record's default, so it can be replaced; isatty passes on the check made just above.
-    code = restore.resume_record(record, agent, cfg, stdout=sys.stderr if args.json else sys.stdout,
-                                 launcher=restore.launch, isatty=lambda stream: True)
-    if not args.json:
-        return code
-    if code == OK:  # only when the launcher returns, which a real exec never does
-        return finish(OK, None, "launched")
-    if code == NEEDS_TTY:
-        return finish(code, f"not launching {record.agent} without a terminal", "refused")
-    return finish(code, f"could not start {record.agent}; see stderr and {paths.log_path()}", "launch-failed")
+    # resume_record's default, so it can be replaced; isatty=True passes on the check made just above.
+    return restore.resume_record(record, agent, cfg, launcher=restore.launch, isatty=True)
 
 
 def _record_for_session(session_id: str) -> Optional[Record]:
@@ -600,7 +585,7 @@ def _print_steps(results) -> bool:
 
 def _confirmation_refused(args: argparse.Namespace, command: str, **fields) -> Optional[int]:
     """Exit NEEDS_TTY when a confirmation is needed but cannot be asked (--json never asks); else None."""
-    if args.yes or args.dry_run or (_interactive() and not args.json):
+    if args.yes or args.dry_run or (restore.has_terminal() and not args.json):
         return None
     return _fail(args, command, NEEDS_TTY,
                  f"{command} changes system settings and needs confirmation; run it in a terminal, or pass --yes "
@@ -745,7 +730,9 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name, help=help_text, epilog=EXIT_CODES)
         command.add_argument("--print", action="store_true",
                              help="print the resume command and exit 0; launch nothing, change nothing")
-        _json_flag(command)
+        command.add_argument("--json", action="store_true",
+                             help="print one JSON object with the resume command (implies --print; schema in "
+                                  "docs/json/)")
         return command
 
     launching("here", "resume what died in this pane (the default); needs a terminal")
