@@ -34,7 +34,8 @@ STUB_ENTRY = '''"""Stand-in for libexec/agent-resurrect.py: records how the wrap
 import json, os, sys
 with open(os.environ["STUB_LOG"], "a") as fh:
     fh.write(json.dumps({"argv": sys.argv[1:], "isolated": sys.flags.isolated, "executable": sys.executable,
-                         "pycache_prefix": sys.pycache_prefix, "stdin": sys.stdin.read()}) + "\\n")
+                         "pycache_prefix": sys.pycache_prefix, "no_bytecode": sys.dont_write_bytecode,
+                         "stdin": sys.stdin.read()}) + "\\n")
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))
 '''
 
@@ -249,6 +250,17 @@ class WrapperTest(unittest.TestCase):
         for name in ("absolute", "relative", "chained"):
             self.assert_ok(self.run_wrapper("version", program=elsewhere / name))
         self.assertEqual(len(self.calls()), 3)
+
+    def test_dry_runs_write_no_bytecode_under_home(self):
+        self.without_command_line_tools()
+        for argv in (["install", "--dry-run", "--json"], ["uninstall", "--dry-run"]):
+            self.assert_ok(self.run_wrapper(*argv))
+            call = self.calls()[-1]
+            self.assertEqual(call["argv"], argv)
+            self.assertEqual(call["isolated"], 1)
+            self.assertTrue(call["no_bytecode"], argv)
+            self.assertIsNone(call["pycache_prefix"], argv)
+        self.assertFalse((self.home / ".cache").exists())
 
     def test_without_home_runs_without_a_bytecode_cache(self):
         self.without_command_line_tools()

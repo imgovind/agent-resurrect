@@ -198,6 +198,10 @@ write_launchers() {
   tmp="$launcher.tmp.$$"
   {
     printf '#!/bin/sh\n'
+    # A dry run (install --dry-run, uninstall --dry-run) writes nothing under HOME, not even bytecode.
+    # shellcheck disable=SC2016  # "$@" and $arg are meant literally: they belong to the launcher
+    printf 'for arg in "$@"; do [ "$arg" = --dry-run ] && exec %s -I -B %s "$@"; done\n' \
+      "$(sh_quote "$PYTHON")" "$(sh_quote "$DATA/libexec/agent-resurrect.py")"
     # pycache_prefix: the system Python's standard library has no bytecode and is read-only, so without a
     # writable cache every run (each Claude Code hook) would recompile it: about 155 ms instead of 45 ms.
     # shellcheck disable=SC2016  # "$@" is meant literally: it belongs to the launcher, not to this script

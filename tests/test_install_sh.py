@@ -167,7 +167,12 @@ class InstallShTest(unittest.TestCase):
         launcher = bin_dir / "agent-resurrect"
         self.assertTrue(os.access(launcher, os.X_OK))
         text = launcher.read_text()
-        self.assertTrue(text.startswith("#!/bin/sh\nexec "), text)
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 3, text)
+        self.assertEqual(lines[0], "#!/bin/sh")
+        self.assertTrue(lines[1].startswith('for arg in "$@"; do [ "$arg" = --dry-run ] && exec '), text)
+        self.assertTrue(lines[1].endswith(f" -I -B '{data}/libexec/agent-resurrect.py' \"$@\"; done"), text)
+        self.assertTrue(lines[2].startswith("exec "), text)
         pycache = self.home / ".cache" / "agent-resurrect" / "pycache"
         self.assertIn(f" -I -X 'pycache_prefix={pycache}' '{data}/libexec/agent-resurrect.py' \"$@\"\n", text)
         self.assertEqual(os.readlink(bin_dir / "resurrect"), "agent-resurrect")
@@ -185,6 +190,25 @@ class InstallShTest(unittest.TestCase):
         self.assertTrue(all(c["isolated"] for c in calls))
         # Bytecode, the stdlib's included, is cached outside the read-only system Python.
         self.assertEqual({c["pycache_prefix"] for c in calls}, {str(pycache)})
+
+    def test_launcher_dry_runs_write_no_bytecode(self):
+        """`agent-resurrect install --dry-run` and `uninstall --dry-run` write nothing under HOME, so the launcher
+        runs them with -B and without the bytecode cache under ~/.cache."""
+        self.assert_ok(self.run_sh(self.make_clone() / "install.sh"))
+        launcher = self.home / ".local" / "bin" / "agent-resurrect"
+        before = tree(self.home)
+        for argv in (["install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["--dry-run"]):
+            result = subprocess.run([str(launcher), *argv], env=self.env(), capture_output=True, text=True,
+                                    timeout=60)
+            self.assert_ok(result)
+            call = self.stub_calls()[-1]
+            self.assertEqual(call["argv"], argv)
+            self.assertTrue(call["isolated"])
+            self.assertTrue(call["no_bytecode"], argv)
+            self.assertIsNone(call["pycache_prefix"], argv)
+        self.assertEqual(tree(self.home), before)
+        subprocess.run([str(launcher), "find", "--dry-run-ish"], env=self.env(), check=True, timeout=60)
+        self.assertFalse(self.stub_calls()[-1]["no_bytecode"])  # only an exact --dry-run argument
 
     def test_install_sh_keeps_a_resurrect_that_is_not_ours(self):
         clone = self.make_clone()

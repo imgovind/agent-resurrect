@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -989,6 +990,58 @@ class CliEntryPointTest(unittest.TestCase):
             self.assertEqual(record_file.read_bytes(), before)
             self.assertFalse((home / ".local" / "state" / "agent-resurrect" / "restores.jsonl").exists())
             self.assertFalse(marker.exists(), "claude was launched")
+
+
+class DryRunWritesNothingTest(unittest.TestCase):
+    """`install --dry-run` and `uninstall --dry-run`, through the plugin's bin/agent-resurrect with the real
+    settings (tests/fakes first on PATH), leave every byte under HOME as it was: no log, no manifest, no
+    bytecode cache. Checked on a fresh HOME and again after a real install."""
+
+    WRAPPER = REPO / "bin" / "agent-resurrect"
+    DRY_RUNS = (["install", "--dry-run"], ["install", "--dry-run", "--json"], ["install", "--dry-run", "--no-plugin"],
+                ["uninstall", "--dry-run"], ["uninstall", "--dry-run", "--json"],
+                ["uninstall", "--dry-run", "--purge"])
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
+        self.home, state = root / "home", root / "state"
+        for directory in (self.home, state, root / "iTerm.app"):
+            directory.mkdir()
+        (self.home / ".zshrc").write_text("# mine\n")
+        path = os.pathsep.join([str(REPO / "tests" / "fakes"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+        for tool in ("claude", "defaults", "launchctl"):
+            self.assertEqual(shutil.which(tool, path=path), str(REPO / "tests" / "fakes" / tool))
+        # PYTHONDONTWRITEBYTECODE reaches only the Python fakes: agent-resurrect runs with -I, which ignores it.
+        self.env = {"HOME": str(self.home), "PATH": path, "SHELL": "/bin/zsh", "LANG": "C", "TMPDIR": str(root),
+                    "PYTHONDONTWRITEBYTECODE": "1", "AGENT_RESURRECT_ITERM_APP": str(root / "iTerm.app"),
+                    "FAKE_DEFAULTS_DB": str(state / "defaults.json"), "FAKE_CLAUDE_DB": str(state / "claude.json"),
+                    "FAKE_LAUNCHCTL_DB": str(state / "launchctl.json")}
+
+    def run_wrapper(self, *argv):
+        return subprocess.run([str(self.WRAPPER), *argv], env=self.env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=120)
+
+    def snapshot(self):
+        return {str(p.relative_to(self.home)): (p.is_dir(), None if p.is_dir() else p.read_bytes())
+                for p in sorted(self.home.rglob("*"))}
+
+    def assert_dry_runs_change_nothing(self):
+        before = self.snapshot()
+        for argv in self.DRY_RUNS:
+            result = self.run_wrapper(*argv)
+            self.assertEqual(result.returncode, OK, (argv, result.stdout, result.stderr))
+            if "--json" in argv:
+                self.assertTrue(json.loads(result.stdout)["dry_run"])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_dry_runs_write_nothing_under_home(self):
+        self.assert_dry_runs_change_nothing()
+        installed = self.run_wrapper("install", "--yes", "--no-plugin")
+        self.assertEqual(installed.returncode, OK, installed.stdout + installed.stderr)
+        self.assertTrue((self.home / ".local" / "state" / "agent-resurrect" / "manifest.json").exists())
+        self.assert_dry_runs_change_nothing()
 
 
 if __name__ == "__main__":

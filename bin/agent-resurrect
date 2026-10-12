@@ -63,6 +63,12 @@ else
   give_up "$@"
 fi
 
+# A dry run (install --dry-run, uninstall --dry-run) writes nothing under HOME, not even bytecode: -B, no cache.
+for arg in "$@"; do
+  if [ "$arg" = --dry-run ]; then
+    exec "$python" -I -B "$root/libexec/agent-resurrect.py" "$@"
+  fi
+done
 if [ -n "${HOME:-}" ]; then
   exec "$python" -I -X "pycache_prefix=$HOME/.cache/agent-resurrect/pycache" "$root/libexec/agent-resurrect.py" "$@"
 fi
