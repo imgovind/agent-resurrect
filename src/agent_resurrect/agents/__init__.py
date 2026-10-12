@@ -5,7 +5,8 @@ from .base import AgentAdapter, HookContext
 
 
 def all_agents() -> List[AgentAdapter]:
-    return []
+    from .claude import ClaudeAdapter  # imported on use: the registry itself stays cheap to import
+    return [ClaudeAdapter()]
 
 
 def get_agent(name: str) -> Optional[AgentAdapter]:
