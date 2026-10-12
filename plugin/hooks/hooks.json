@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionStart >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionEnd >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
