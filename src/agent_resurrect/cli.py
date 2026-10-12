@@ -16,7 +16,7 @@ from .agents import all_agents, get_agent
 from .agents.base import AgentAdapter, HookContext
 from .config import DEFAULTS as CONFIG_DEFAULTS
 from .config import load_config, set_value
-from .doctor import printable
+from .display import printable
 from .model import Candidate, Record, SessionInfo, parse_iso
 from .procs import Procs
 from .settings import all_settings

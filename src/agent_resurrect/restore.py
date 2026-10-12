@@ -22,6 +22,7 @@ from . import logs, paths, store
 from .agents import get_agent
 from .agents.base import AgentAdapter
 from .config import Config, load_config
+from .display import printable  # display only: format_command keeps exact values
 from .model import STATUS_CONSUMED, STATUS_LIVE, STATUS_SKIPPED, Record, parse_iso
 from .procs import Procs
 from .terminals import detect_terminal
@@ -40,13 +41,6 @@ TITLE_WIDTH = 60
 # in its children (restore_signals=True); a bare exec has to do the same.
 _SIGNALS_TO_RESET = tuple(getattr(signal, name) for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
                           if hasattr(signal, name))
-
-
-def printable(text: object) -> str:
-    """Text that is safe to write to a terminal. Titles, prompts, paths and ids come from transcripts and
-    hook payloads, so any control or other non-printable character (escape sequences, C1 controls, bidi
-    overrides) becomes "?". Display only: format_command keeps exact values."""
-    return "".join(ch if ch.isprintable() else "?" for ch in str(text))
 
 
 @dataclass

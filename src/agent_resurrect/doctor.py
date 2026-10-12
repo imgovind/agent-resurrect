@@ -11,20 +11,11 @@ from typing import Callable, Dict, List, Optional, TextIO
 from . import paths, store
 from .agents import get_agent
 from .config import load_config
+from .display import printable
 from .model import STATUS_LIVE, Record, parse_iso
 from .procs import Procs
 from .settings import all_settings
 from .terminals import detect_terminal
-
-# C0 controls, DEL and C1 controls (0x9b is a one-byte CSI). Printed raw, text from transcripts, records or the
-# environment could drive the terminal: rewrite the screen, set the title, or write the clipboard (OSC 52).
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-
-
-def printable(value: object) -> str:
-    """`value` as one line that is safe to print: each control character becomes "?" (1:1, so columns align)."""
-    return _CONTROL.sub("?", str(value))
-
 
 # `sysctl -n kern.boottime` prints "{ sec = 1791785041, usec = 851234 } Mon Oct 12 11:34:01 2026".
 # Anchor on "{ sec =": a bare "sec =" also matches inside "usec =".
