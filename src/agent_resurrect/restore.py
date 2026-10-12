@@ -42,6 +42,13 @@ _SIGNALS_TO_RESET = tuple(getattr(signal, name) for name in ("SIGPIPE", "SIGXFZ"
                           if hasattr(signal, name))
 
 
+def printable(text: object) -> str:
+    """Text that is safe to write to a terminal. Titles, prompts, paths and ids come from transcripts and
+    hook payloads, so any control or other non-printable character (escape sequences, C1 controls, bidi
+    overrides) becomes "?". Display only: format_command keeps exact values."""
+    return "".join(ch if ch.isprintable() else "?" for ch in str(text))
+
+
 @dataclass
 class Decision:
     eligible: bool
@@ -77,14 +84,36 @@ def plan_resume(record: Record, agent: AgentAdapter, config: Config) -> ResumePl
         return ResumePlan(argv, record.cwd, None)
     warning = None
     if record.cwd:
-        warning = f"working directory {record.cwd} no longer exists; resuming from the current directory"
+        warning = (f"working directory {printable(record.cwd)} no longer exists; "
+                   "resuming from the current directory")
     return ResumePlan(argv, None, warning)
 
 
 def format_command(plan: ResumePlan) -> str:
-    """A copy-paste ready shell command, e.g. "cd '/a b' && claude --resume x"."""
-    command = " ".join(shlex.quote(part) for part in plan.argv)
-    return f"cd {shlex.quote(plan.cwd)} && {command}" if plan.cwd else command
+    """A copy-paste ready shell command, e.g. "cd '/a b' && claude --resume x". Safe to print: it never
+    contains a raw control character, yet the shell still gets every value exactly."""
+    command = " ".join(_quote(part) for part in plan.argv)
+    return f"cd {_quote(plan.cwd)} && {command}" if plan.cwd else command
+
+
+def _quote(part: str) -> str:
+    if part.isprintable():
+        return shlex.quote(part)
+    # shlex.quote would leave control characters raw inside '...'. ANSI-C quoting ($'...', understood by
+    # bash 3.2 and zsh) spells them as \xHH bytes of their UTF-8 encoding instead.
+    out = []
+    for ch in part:
+        if ch in "\\'":
+            out.append("\\" + ch)
+        elif ch.isprintable():
+            out.append(ch)
+        else:
+            try:
+                raw = ch.encode("utf-8", "surrogateescape")
+            except UnicodeEncodeError:
+                raw = b"?"
+            out.extend(f"\\x{byte:02x}" for byte in raw)
+    return "$'" + "".join(out) + "'"
 
 
 def launch(plan: ResumePlan) -> None:
@@ -172,7 +201,7 @@ def resume_record(record: Record, agent: AgentAdapter, config: Config, *, stdout
     out = stdout if stdout is not None else sys.stdout
     plan = plan_resume(record, agent, config)
     if announce:
-        print(f'Resurrecting "{_title(record, agent)}" ({record.agent}) in {_where(record)}', file=out)
+        print(f'Resurrecting "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}', file=out)
     key = record.pane_key
     previous = _stored_status(record)
     if previous is not None:
@@ -184,7 +213,7 @@ def resume_record(record: Record, agent: AgentAdapter, config: Config, *, stdout
     try:
         launcher(plan)
     except OSError as exc:
-        print(f"agent-resurrect: could not start {plan.argv[0]}: {exc}", file=out)
+        print(f"agent-resurrect: could not start {printable(plan.argv[0])}: {printable(exc)}", file=out)
         if previous is not None:
             store.set_status(key, previous)
         store.append_restore_event(key, "launch-failed", f"{record.session_id}: {exc}")
@@ -220,7 +249,8 @@ def auto(env: Mapping[str, str], *, terminal: Optional[TerminalAdapter] = None,
         return 130
     except Exception as exc:  # a shell's first prompt must never show a traceback
         logs.log(f"restore: auto failed for {key}: {exc!r}\n{traceback.format_exc()}")
-        print(f"agent-resurrect: could not restore this pane ({exc}); see {paths.log_path()}", file=stdout)
+        print(f"agent-resurrect: could not restore this pane ({printable(exc)}); see {printable(paths.log_path())}",
+              file=stdout)
         return 1
 
 
@@ -235,7 +265,8 @@ def _auto_on_terminal(record: Record, agent_lookup, procs: Procs, config: Config
     decision = check_eligible(record, agent, procs, config, now=now)
     if not decision.eligible:
         if decision.reason == SESSION_GONE:
-            print(f"agent-resurrect: the {record.agent} session {record.session_id} that ran in this pane "
+            print(f"agent-resurrect: the {printable(record.agent)} session {printable(record.session_id)} "
+                  "that ran in this pane "
                   "no longer exists; forgetting it.", file=stdout)
             store.delete(key)
         store.append_restore_event(key, decision.reason, record.session_id)
@@ -248,11 +279,11 @@ def _auto_on_terminal(record: Record, agent_lookup, procs: Procs, config: Config
         store.append_restore_event(key, "offered", record.session_id)
         return 0
     if mode == "ask":
-        question = f'Resurrect "{_title(record, agent)}" ({record.agent}) in {_where(record)}?'
+        question = f'Resurrect "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}?'
         if not ask(question, stdin=stdin, stdout=stdout):
             return _skip(record, stdout)
     elif mode != "immediate":  # countdown, also the fallback for an unexpected value
-        print(f'Resurrecting "{_title(record, agent)}" ({record.agent}) in {_where(record)}. '
+        print(f'Resurrecting "{_title(record, agent)}" ({printable(record.agent)}) in {_where(record)}. '
               "Press any key to skip.", file=stdout)
         stdout.flush()
         if keypress(config.countdown_seconds, stdin=stdin, stdout=stdout):
@@ -280,21 +311,21 @@ def _stored_status(record: Record) -> Optional[str]:
 
 
 def _title(record: Record, agent: AgentAdapter) -> str:
-    """Title, else first prompt, else session id: one line, at most TITLE_WIDTH characters."""
+    """Title, else first prompt, else session id: one printable line, at most TITLE_WIDTH characters."""
     try:
         info = agent.describe(record)
     except Exception as exc:  # display only; never block a restore on it
         logs.log(f"restore: cannot describe {record.session_id}: {exc!r}")
         info = None
     for candidate in ((info.title, info.first_prompt) if info is not None else ()):
-        text = " ".join(str(candidate or "").split())
+        text = printable(" ".join(str(candidate or "").split()))
         if text:
             return text if len(text) <= TITLE_WIDTH else text[:TITLE_WIDTH - 3].rstrip() + "..."
-    return record.session_id
+    return printable(record.session_id)
 
 
 def _where(record: Record) -> str:
-    return record.cwd or "the current directory"
+    return printable(record.cwd) if record.cwd else "the current directory"
 
 
 def _isatty(stream) -> bool:

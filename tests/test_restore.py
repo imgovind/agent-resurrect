@@ -6,6 +6,7 @@ import pty
 import select
 import shutil
 import signal
+import subprocess
 import tempfile
 import termios
 import threading
@@ -440,6 +441,92 @@ class RestoreAutoTest(unittest.TestCase):
         self.assertIn("agent-resurrect:", self.out.getvalue())
         self.assertIn("transcript store exploded", paths.log_path().read_text())
         self.assertEqual(store.load(KEY).status, STATUS_LIVE)
+
+
+def unsafe_characters(text: str):
+    """Characters that must never reach the terminal raw: controls (escape sequences), C1, bidi overrides."""
+    return [c for c in text if not (c.isprintable() or c in "\n\r")]
+
+
+EVIL_TITLE = "evil\x1b]52;c;ZXZpbA==\x07 title \u202e"   # OSC 52 writes the clipboard; RLO flips text
+EVIL_CWD = "/nonexistent/a\x1b[2Jb"                         # CSI 2J clears the screen
+EVIL_SESSION = "s-\x9b31m"                                  # C1 CSI
+
+
+class EvilAgent(FakeAgent):
+    def describe(self, record):
+        return SessionInfo(title=EVIL_TITLE)
+
+
+class RestoreTerminalSafetyTest(unittest.TestCase):
+    """Titles, prompts, paths and ids come from transcripts and hook payloads; printing them raw would let
+    their escape sequences drive the terminal."""
+
+    def test_printable_replaces_control_characters(self):
+        self.assertEqual(restore.printable("a\x1b[2Jb\x07\x9b\u202ec\u00e9 d"), "a?[2Jb???c\u00e9 d")
+        self.assertEqual(restore.printable("plain /path ok"), "plain /path ok")
+
+    def test_untrusted_text_never_reaches_the_terminal_raw(self):
+        outputs = {}
+        with temp_home():
+            def run_auto(name, mode, agent=None, launcher=lambda plan: None, **kw):
+                store.save(make_record(session_id=EVIL_SESSION, cwd=EVIL_CWD))
+                out, prompts = io.StringIO(), []
+                restore.auto(ENV, terminal=FakeTerminal(), agent_lookup=lambda n: agent or EvilAgent(),
+                             procs=FakeProcs(), config=Config(auto_resume=mode), stdin=io.StringIO(), stdout=out,
+                             keypress=lambda s, **k: kw.get("skip", False),
+                             ask=lambda q, **k: prompts.append(q) or False,
+                             launcher=launcher, isatty=lambda f: True)
+                outputs[name] = out.getvalue() + "".join(prompts)
+
+            def fail(plan):
+                raise FileNotFoundError(2, "No such file or directory", "agent\x1b[2J")
+
+            class Gone(EvilAgent):
+                def session_exists(self, record):
+                    return False
+
+            class Broken(EvilAgent):
+                def session_exists(self, record):
+                    raise RuntimeError("bad \x1b]0;pwned\x07 state")
+
+            run_auto("countdown", "countdown")
+            run_auto("countdown skip", "countdown", skip=True)
+            run_auto("ask", "ask")
+            run_auto("off", "off")
+            run_auto("immediate", "immediate")
+            run_auto("launch failure", "immediate", launcher=fail)
+            run_auto("session gone", "countdown", agent=Gone())
+            run_auto("internal error", "countdown", agent=Broken())
+            out = io.StringIO()
+            restore.resume_record(make_record(session_id=EVIL_SESSION, cwd=EVIL_CWD), FakeAgent(), Config(),
+                                  stdout=out, launcher=lambda plan: None)
+            outputs["resume_record"] = out.getvalue()
+        for name, text in outputs.items():
+            with self.subTest(name):
+                self.assertTrue(text, "every path prints something")
+                self.assertEqual(unsafe_characters(text), [], repr(text))
+        self.assertIn("fake-agent --resume $'s-\\xc2\\x9b31m'", outputs["off"])  # exact, yet printable
+
+    def test_format_command_escapes_control_characters_exactly(self):
+        parts = ["plain", "a b'c", "x\x1b[2Jy", "tab\there", "new\nline", "bell\x07 and \\ and 'q'",
+                 "zero\u200bwidth", "caf\u00e9", "c1\x9bm", ""]
+        for part in parts:
+            quoted = restore.format_command(ResumePlan([part], None, None))
+            self.assertEqual(unsafe_characters(quoted), [], repr(quoted))
+        shells = []
+        for shell in ("/bin/bash", shutil.which("bash"), "/bin/zsh", shutil.which("zsh")):
+            if shell and os.access(shell, os.X_OK) and os.path.realpath(shell) not in [os.path.realpath(s) for s in shells]:
+                shells.append(shell)
+        if not shells:
+            self.skipTest("no bash or zsh to evaluate the quoting")
+        command = restore.format_command(ResumePlan(["printf", "%s\\0"] + parts, None, None))
+        for shell in shells:
+            with self.subTest(shell=shell):
+                result = subprocess.run([shell, "-c", command], capture_output=True, timeout=30,
+                                        env={"PATH": "/usr/bin:/bin", "LC_ALL": "en_US.UTF-8"})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.split(b"\0")[:-1], [p.encode("utf-8") for p in parts])
 
 
 class RestorePromptTest(unittest.TestCase):
