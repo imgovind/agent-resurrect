@@ -3,13 +3,13 @@
   "owner": {
     "name": "imgovind"
   },
-  "description": "agent-resurrect: resume AI coding agent sessions in their terminal panes after a restart.",
+  "description": "agent-resurrect: resume Claude Code sessions in their iTerm2 panes after a restart.",
   "plugins": [
     {
       "name": "agent-resurrect",
-      "source": "./plugin",
+      "source": "./",
       "version": "0.1.0",
-      "description": "Resume Claude Code sessions in their iTerm2 panes after a restart."
+      "description": "Resume Claude Code sessions in their iTerm2 panes after a restart. Run /agent-resurrect:setup once to finish installing."
     }
   ]
 }

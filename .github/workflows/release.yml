@@ -1,0 +1,80 @@
+name: release
+
+# Publishes a GitHub Release for each v* tag. Its notes are the tag's CHANGELOG section, and its assets are an
+# install.sh pinned to the tagged commit and SHA256SUMS. That makes
+# https://github.com/imgovind/agent-resurrect/releases/latest/download/install.sh the one-line installer.
+# It refuses to publish when any version string disagrees with the tag.
+# tests/test_install_sh.py runs the version, notes and pin steps below locally; keep their names in step.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Every version string matches the tag
+        run: |
+          python3 - "${GITHUB_REF_NAME#v}" <<'PY'
+          import json, re, sys
+
+          want = sys.argv[1]
+
+          def text(path):
+              with open(path) as fh:
+                  return fh.read()
+
+          def only(pattern, path):
+              found = re.findall(pattern, text(path), re.M)
+              return found[0] if len(found) == 1 else f"{len(found)} matches"
+
+          versions = {
+              "src/agent_resurrect/__init__.py": only(r'^__version__ = "([^"]*)"$', "src/agent_resurrect/__init__.py"),
+              "install.sh DEFAULT_REF": only(r'^DEFAULT_REF="v([^"]*)"$', "install.sh"),
+              ".claude-plugin/plugin.json": json.loads(text(".claude-plugin/plugin.json")).get("version"),
+          }
+          for i, entry in enumerate(json.loads(text(".claude-plugin/marketplace.json"))["plugins"]):
+              versions[f".claude-plugin/marketplace.json plugins[{i}]"] = entry.get("version")
+          heading = re.search(r"^## \[" + re.escape(want) + r"\]", text("CHANGELOG.md"), re.M)
+          versions["CHANGELOG.md section"] = want if heading else "missing"
+          for where, version in versions.items():
+              print(f"{where}: {version}")
+          wrong = sorted(where for where, version in versions.items() if version != want)
+          if wrong:
+              sys.exit(f"tag v{want} disagrees with: {', '.join(wrong)}")
+          PY
+
+      - name: Unit tests
+        run: PYTHONPATH=src python3 -m unittest discover -s tests -t .
+
+      - name: Release notes from the changelog
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" 'index($0, "## [" v "]") == 1 {on=1; next} /^## \[/ {on=0} on && !/^\[[^]]*\]: http/' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md
+
+      - name: Pin the installer to the tagged commit
+        run: |
+          sha="$(git rev-parse HEAD)"
+          test "$sha" = "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          mkdir -p dist
+          sed "s/^AGENT_RESURRECT_COMMIT=\"\"\$/AGENT_RESURRECT_COMMIT=\"$sha\"/" install.sh > dist/install.sh
+          test "$(grep -cx "AGENT_RESURRECT_COMMIT=\"$sha\"" dist/install.sh)" = 1
+          bash -n dist/install.sh
+          (cd dist && shasum -a 256 install.sh > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/install.sh dist/SHA256SUMS --verify-tag \
+            --title "agent-resurrect ${GITHUB_REF_NAME#v}" --notes-file notes.md

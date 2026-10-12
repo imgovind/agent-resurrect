@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Entry point. The launcher in ~/.local/bin runs this file with `python3 -I`."""
+"""Entry point. bin/agent-resurrect (the plugin's command) and the launcher in ~/.local/bin run this file with
+`python3 -I`. It lives in libexec/ rather than bin/ so that it is not a second command on the Bash tool's PATH."""
 import sys
 from pathlib import Path
 

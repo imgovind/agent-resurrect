@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_resurrect import __version__
+
 REPO = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO / "install.sh"
 FAKES = REPO / "tests" / "fakes"
@@ -15,12 +17,41 @@ BASH = "/bin/bash" if Path("/bin/bash").exists() else (shutil.which("bash") or "
 SYSTEM_DIRS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 DONE = "Installed. Open a new terminal tab to activate. Uninstall any time with: agent-resurrect uninstall"
 
-STUB_CLI = '''"""Stand-in for bin/agent-resurrect.py: records how the launcher ran it."""
+RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
+# What install.sh copies into ~/.local/share/agent-resurrect: the code, and the plugin that runs from there.
+INSTALLED = ["src", "libexec", "bin", "shell", "hooks", "skills", ".claude-plugin", "install.sh", "README.md",
+             "LICENSE"]
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+STUB_CLI = '''"""Stand-in for libexec/agent-resurrect.py: records how the launcher ran it."""
 import json, os, sys
 with open(os.environ["STUB_LOG"], "a") as fh:
-    fh.write(json.dumps({"argv": sys.argv[1:], "isolated": sys.flags.isolated,
-                         "pycache_prefix": sys.pycache_prefix}) + "\\n")
+    fh.write(json.dumps({"argv": sys.argv[1:], "isolated": sys.flags.isolated, "cwd": os.getcwd(),
+                         "pycache_prefix": sys.pycache_prefix, "no_bytecode": sys.dont_write_bytecode,
+                         "file": os.path.abspath(__file__)}) + "\\n")
 '''
+
+
+def workflow_step(name: str) -> str:
+    """The `run: |` script of the release workflow step called `name`, dedented."""
+    lines = RELEASE_YML.read_text().splitlines()
+    start = lines.index(f"      - name: {name}")
+    for i in range(start + 1, len(lines)):
+        if lines[i].strip().startswith("- name:"):
+            break
+        if lines[i].strip() == "run: |":
+            indent = len(lines[i]) - len(lines[i].lstrip()) + 2
+            script = []
+            for line in lines[i + 1:]:
+                if line.strip() and len(line) - len(line.lstrip()) < indent:
+                    break
+                script.append(line[indent:])
+            return "\n".join(script).rstrip() + "\n"
+    raise AssertionError(f"step {name!r} has no run block")
+
+
+def tree(root: Path):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
 
 
 class InstallShTest(unittest.TestCase):
@@ -57,21 +88,42 @@ class InstallShTest(unittest.TestCase):
             "STUB_LOG": str(self.state / "stub.jsonl"),
         }
 
-    def run_sh(self, script: Path = INSTALL_SH, env=None) -> subprocess.CompletedProcess:
-        return subprocess.run([BASH, str(script)], env=env or self.env(), cwd=str(self.home),
+    def run_sh(self, script: Path = INSTALL_SH, *args: str, env=None) -> subprocess.CompletedProcess:
+        return subprocess.run([BASH, str(script), *args], env=env or self.env(), cwd=str(self.home),
                               capture_output=True, text=True, timeout=180)
 
+    def pipe_sh(self, script_text: str, *args: str, env=None) -> subprocess.CompletedProcess:
+        """`curl ... | bash -s -- args`: the script arrives on stdin, so it has no directory of its own."""
+        return subprocess.run([BASH, "-s", "--", *args], input=script_text, env=env or self.env(),
+                              cwd=str(self.home), capture_output=True, text=True, timeout=180)
+
     def make_clone(self) -> Path:
-        """A copy of this checkout's installable parts, with a stub CLI in place of bin/agent-resurrect.py."""
+        """A copy of this checkout, with a stub CLI in place of libexec/agent-resurrect.py."""
         clone = self.tmp / "clone"
         clone.mkdir()
         shutil.copy2(INSTALL_SH, clone / "install.sh")
-        shutil.copytree(REPO / "src", clone / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        for item in ("src", "bin", "shell", "hooks", "skills", ".claude-plugin", "tests", "docs"):
+            shutil.copytree(REPO / item, clone / item, ignore=shutil.ignore_patterns("__pycache__"))
         (clone / "src" / "agent_resurrect" / "__pycache__").mkdir(exist_ok=True)  # must not be installed
-        (clone / "bin").mkdir()
-        (clone / "bin" / "agent-resurrect.py").write_text(STUB_CLI)
+        (clone / "libexec").mkdir()
+        (clone / "libexec" / "agent-resurrect.py").write_text(STUB_CLI)
         (clone / "README.md").write_text("readme\n")
+        shutil.copy2(REPO / "LICENSE", clone / "LICENSE")
         return clone
+
+    def fake_download(self, clone: Path) -> Path:
+        """A fake curl that serves `clone` as the release tarball and logs each URL it was asked for."""
+        package = self.tmp / "package"
+        shutil.copytree(clone, package / "agent-resurrect-0.1.0", symlinks=True)
+        tarball = self.tmp / "release.tar.gz"
+        subprocess.run(["tar", "-czf", str(tarball), "-C", str(package), "agent-resurrect-0.1.0"], check=True)
+        urls = self.state / "curl-urls"
+        self.tool("curl", f'#!/bin/sh\nfor url; do :; done\necho "$url" >> "{urls}"\ncat "{tarball}"\n')
+        return urls
+
+    def leftovers(self):
+        """Temporary download and staging directories install.sh left in TMPDIR."""
+        return [p.name for p in self.tmp.iterdir() if p.name.startswith("agent-resurrect.")]
 
     def stub_calls(self):
         path = self.state / "stub.jsonl"
@@ -117,11 +169,15 @@ class InstallShTest(unittest.TestCase):
         text = launcher.read_text()
         self.assertTrue(text.startswith("#!/bin/sh\nexec "), text)
         pycache = self.home / ".cache" / "agent-resurrect" / "pycache"
-        self.assertIn(f" -I -X 'pycache_prefix={pycache}' '{data}/bin/agent-resurrect.py' \"$@\"\n", text)
+        self.assertIn(f" -I -X 'pycache_prefix={pycache}' '{data}/libexec/agent-resurrect.py' \"$@\"\n", text)
         self.assertEqual(os.readlink(bin_dir / "resurrect"), "agent-resurrect")
+        self.assertEqual(sorted(p.name for p in data.iterdir()), sorted(INSTALLED))
         self.assertTrue((data / "src" / "agent_resurrect" / "__init__.py").exists())
-        self.assertTrue((data / "install.sh").exists())
-        self.assertTrue((data / "README.md").exists())
+        # The data dir is the plugin root of the local marketplace: its hooks run the wrapper in bin/.
+        self.assertTrue((data / ".claude-plugin" / "plugin.json").exists())
+        self.assertTrue((data / "hooks" / "hooks.json").exists())
+        self.assertTrue((data / "skills" / "setup" / "SKILL.md").exists())
+        self.assertTrue(os.access(data / "bin" / "agent-resurrect", os.X_OK))
         self.assertEqual(list(data.rglob("__pycache__")), [])
         self.assertFalse((data.parent / "agent-resurrect.new").exists())
         calls = self.stub_calls()
@@ -142,7 +198,7 @@ class InstallShTest(unittest.TestCase):
 
     def test_install_sh_reports_failed_install_and_still_runs_doctor(self):
         clone = self.make_clone()
-        (clone / "bin" / "agent-resurrect.py").write_text(
+        (clone / "libexec" / "agent-resurrect.py").write_text(
             STUB_CLI + 'sys.exit(1 if sys.argv[1:2] == ["install"] else 0)\n')
         result = self.run_sh(clone / "install.sh")
         self.assertEqual(result.returncode, 1)
@@ -172,36 +228,69 @@ class InstallShTest(unittest.TestCase):
 
     def test_install_sh_piped_downloads_the_pinned_release(self):
         """`curl ... | bash`: no script directory, so it downloads and unpacks the release tarball."""
-        clone = self.make_clone()
-        package = self.tmp / "package"
-        shutil.copytree(clone, package / "agent-resurrect-0.1.0")
-        tarball = self.tmp / "release.tar.gz"
-        subprocess.run(["tar", "-czf", str(tarball), "-C", str(package), "agent-resurrect-0.1.0"], check=True)
-        urls = self.state / "curl-urls"
-        self.tool("curl", f'#!/bin/sh\nfor url; do :; done\necho "$url" >> "{urls}"\ncat "{tarball}"\n')
-
-        piped = subprocess.run([BASH], input=INSTALL_SH.read_text(), env=self.env(), cwd=str(self.home),
-                               capture_output=True, text=True, timeout=180)
+        urls = self.fake_download(self.make_clone())
+        piped = self.pipe_sh(INSTALL_SH.read_text())
         self.assert_ok(piped)
         self.assertIn(DONE, piped.stdout)
         self.assertTrue((self.home / ".local/share/agent-resurrect/src/agent_resurrect/__init__.py").exists())
         self.assertEqual([c["argv"] for c in self.stub_calls()], [["install", "--yes"], ["doctor"]])
-        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.startswith("agent-resurrect.")], [])
+        self.assertEqual(self.leftovers(), [])
 
         env = self.env()
         env["AGENT_RESURRECT_REF"] = "v9.9.9"
-        self.assert_ok(subprocess.run([BASH], input=INSTALL_SH.read_text(), env=env, cwd=str(self.home),
-                                      capture_output=True, text=True, timeout=180))
+        self.assert_ok(self.pipe_sh(INSTALL_SH.read_text(), env=env))
         self.assertEqual(urls.read_text().splitlines(),
                          ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0",
                           "https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v9.9.9"])
 
         self.tool("curl", "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n")
-        failed = subprocess.run([BASH], input=INSTALL_SH.read_text(), env=self.env(), cwd=str(self.home),
-                                capture_output=True, text=True, timeout=180)
+        failed = self.pipe_sh(INSTALL_SH.read_text())
         self.assertEqual(failed.returncode, 1)
         self.assertIn("could not download", failed.stderr)
         self.assertTrue((self.home / ".local/share/agent-resurrect/src").exists())  # the old install is untouched
+
+    def test_dry_run_from_a_clone_writes_nothing_under_home(self):
+        clone = self.make_clone()
+        result = self.run_sh(clone / "install.sh", "--dry-run")
+        self.assert_ok(result)
+        self.assertIn("Dry run", result.stdout)
+        self.assertNotIn(DONE, result.stdout)
+        self.assertEqual(tree(self.home), [])
+        (call,) = self.stub_calls()
+        self.assertEqual(call["argv"], ["install", "--dry-run"])
+        self.assertTrue(call["isolated"])
+        self.assertTrue(call["no_bytecode"])
+        # It ran the staged copy, exactly the files an install would copy, which is gone afterwards.
+        self.assertFalse(call["file"].startswith(str(clone)))
+        self.assertTrue(call["file"].endswith("/libexec/agent-resurrect.py"))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_dry_run_piped_downloads_to_a_temporary_directory_only(self):
+        urls = self.fake_download(self.make_clone())
+        result = self.pipe_sh(INSTALL_SH.read_text(), "--dry-run")
+        self.assert_ok(result)
+        self.assertEqual(urls.read_text().splitlines(),
+                         ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0"])
+        self.assertEqual([c["argv"] for c in self.stub_calls()], [["install", "--dry-run"]])
+        self.assertEqual(tree(self.home), [])
+        self.assertEqual(self.leftovers(), [])
+
+    def test_dry_run_reports_failure(self):
+        clone = self.make_clone()
+        (clone / "libexec" / "agent-resurrect.py").write_text(STUB_CLI + "sys.exit(1)\n")
+        result = self.run_sh(clone / "install.sh", "--dry-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(tree(self.home), [])
+
+    def test_unknown_option_is_a_usage_error(self):
+        result = self.run_sh(INSTALL_SH, "--bogus")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage: install.sh [--dry-run]", result.stderr)
+        self.assertEqual(tree(self.home), [])
+        help_result = self.run_sh(INSTALL_SH, "--help")
+        self.assertEqual(help_result.returncode, 0)
+        self.assertIn("usage: install.sh [--dry-run]", help_result.stdout)
+        self.assertEqual(tree(self.home), [])
 
     def test_install_sh_from_clone(self):
         result = self.run_sh()
@@ -210,6 +299,106 @@ class InstallShTest(unittest.TestCase):
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertTrue((self.home / ".local" / "share" / "agent-resurrect" / "src" / "agent_resurrect").is_dir())
         self.assertTrue((self.home / ".local" / "state" / "agent-resurrect" / "manifest.json").exists())
+
+    def test_install_sh_is_pinnable(self):
+        lines = INSTALL_SH.read_text().splitlines()
+        self.assertEqual(lines.count('AGENT_RESURRECT_COMMIT=""'), 1)  # the release workflow fills this in
+        self.assertEqual(len([line for line in lines if line.startswith("DEFAULT_REF=")]), 1)
+
+    # ---------------------------------------------------------------- release.yml, run step by step locally
+
+    def make_release_repo(self) -> Path:
+        """A throwaway git repository holding the files the release workflow reads, tagged v<version>."""
+        repo = self.tmp / "repo"
+        for name in ("install.sh", "CHANGELOG.md", "src/agent_resurrect/__init__.py",
+                     ".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / name, repo / name)
+        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "release"], ["tag", f"v{__version__}"]):
+            self.git(repo, *argv)
+        return repo
+
+    def git(self, repo: Path, *argv: str) -> str:
+        env = {"HOME": str(self.home), "PATH": os.pathsep.join(SYSTEM_DIRS), "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_CONFIG_GLOBAL": os.devnull}
+        return subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *argv], cwd=str(repo),
+                              env=env, capture_output=True, text=True, check=True, timeout=60).stdout.strip()
+
+    def run_step(self, name: str, repo: Path, tag: str) -> subprocess.CompletedProcess:
+        """Run one step as GitHub Actions does: `bash --noprofile --norc -eo pipefail` on the run block."""
+        script = self.tmp / "step.sh"
+        script.write_text(workflow_step(name))
+        env = {"HOME": str(self.home), "PATH": os.pathsep.join([str(Path(sys.executable).parent)] + SYSTEM_DIRS),
+               "LANG": "C", "GITHUB_REF_NAME": tag, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+        return subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", str(script)], cwd=str(repo),
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_release_refuses_a_tag_that_disagrees_with_any_version(self):
+        repo = self.make_release_repo()
+        self.assert_ok(self.run_step("Every version string matches the tag", repo, f"v{__version__}"))
+        wrong_tag = self.run_step("Every version string matches the tag", repo, "v9.9.9")
+        self.assertNotEqual(wrong_tag.returncode, 0)
+        self.assertIn("9.9.9", wrong_tag.stdout + wrong_tag.stderr)
+        plugin = repo / ".claude-plugin" / "plugin.json"
+        plugin.write_text(plugin.read_text().replace(f'"version": "{__version__}"', '"version": "0.0.1"'))
+        half_bumped = self.run_step("Every version string matches the tag", repo, f"v{__version__}")
+        self.assertNotEqual(half_bumped.returncode, 0)
+        self.assertIn("plugin.json", half_bumped.stdout + half_bumped.stderr)
+
+    def test_release_notes_come_from_the_changelog_section(self):
+        repo = self.tmp / "notes"
+        repo.mkdir()
+        (repo / "CHANGELOG.md").write_text(
+            "# Changelog\n\nIntro.\n\n## [9.9.9] - 2026-11-01\n\n### Added\n\n- New thing.\n\n"
+            "## [0.1.0] - 2026-10-12\n\n- Old thing.\n\n"
+            "[9.9.9]: https://github.com/imgovind/agent-resurrect/releases/tag/v9.9.9\n"
+            "[0.1.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.1.0\n")
+        self.assert_ok(self.run_step("Release notes from the changelog", repo, "v9.9.9"))
+        self.assertEqual((repo / "notes.md").read_text().strip(), "### Added\n\n- New thing.")
+        self.assertNotEqual(self.run_step("Release notes from the changelog", repo, "v1.2.3").returncode, 0)
+
+    def test_release_installer_is_pinned_to_the_tagged_commit(self):
+        repo = self.make_release_repo()
+        sha = self.git(repo, "rev-parse", "HEAD")
+        self.assert_ok(self.run_step("Pin the installer to the tagged commit", repo, f"v{__version__}"))
+        dist = repo / "dist"
+        self.assertEqual(sorted(p.name for p in dist.iterdir()), ["SHA256SUMS", "install.sh"])
+        pinned = (dist / "install.sh").read_text()
+        self.assertEqual(pinned, INSTALL_SH.read_text().replace('AGENT_RESURRECT_COMMIT=""',
+                                                               f'AGENT_RESURRECT_COMMIT="{sha}"'))
+        sums = (dist / "SHA256SUMS").read_text()
+        self.assertRegex(sums, r"^[0-9a-f]{64}  install\.sh\n$")
+        check = subprocess.run(["shasum", "-a", "256", "-c", "SHA256SUMS"], cwd=str(dist), capture_output=True,
+                               text=True, timeout=60)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+        urls = self.fake_download(self.make_clone())
+        result = self.pipe_sh(pinned)
+        self.assert_ok(result)
+        self.assertIn(f"commit {sha}", result.stdout)
+        env = self.env()
+        env["AGENT_RESURRECT_REF"] = "v9.9.9"  # an explicit choice still wins over the pin
+        self.assert_ok(self.pipe_sh(pinned, env=env))
+        self.assertEqual(urls.read_text().splitlines(),
+                         [f"https://codeload.github.com/imgovind/agent-resurrect/tar.gz/{sha}",
+                          "https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v9.9.9"])
+
+    def test_commit_pin_comes_only_from_the_script(self):
+        urls = self.fake_download(self.make_clone())
+        env = self.env()
+        env["AGENT_RESURRECT_COMMIT"] = SHA  # ignored: the unpinned script downloads its release tag
+        self.assert_ok(self.pipe_sh(INSTALL_SH.read_text(), env=env))
+        self.assertEqual(urls.read_text().splitlines(),
+                         ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0"])
+
+    def test_a_malformed_commit_pin_is_refused(self):
+        self.fake_download(self.make_clone())
+        bad = INSTALL_SH.read_text().replace('AGENT_RESURRECT_COMMIT=""', 'AGENT_RESURRECT_COMMIT="main"')
+        result = self.pipe_sh(bad)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a full commit SHA", result.stderr)
+        self.assertEqual(tree(self.home), [])
 
     @unittest.skipUnless(shutil.which("shellcheck"), "shellcheck is not installed")
     def test_install_sh_shellcheck(self):

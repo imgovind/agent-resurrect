@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/agent-resurrect\" hook claude SessionStart >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/agent-resurrect\" hook claude SessionEnd >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
