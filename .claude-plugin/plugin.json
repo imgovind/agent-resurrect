@@ -1,6 +1,6 @@
 {
   "name": "agent-resurrect",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Resumes Claude Code sessions in their iTerm2 panes after a restart. The hooks record which pane each session runs in; run /agent-resurrect:setup once to install the part that brings them back.",
   "author": {
     "name": "imgovind"

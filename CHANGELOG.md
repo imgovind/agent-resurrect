@@ -4,6 +4,16 @@ All notable changes to agent-resurrect are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-13
+
+### Added
+- When `agent-resurrect` finds nothing recorded for a pane, it offers to search that pane's recent scrollback (iTerm2) for the session that ran there, shows the match, and asks before resuming it: yes by default for a strong match, no for a weak or ambiguous one. No copying and pasting needed.
+- `agent-resurrect find --from-pane` does the same search and only prints the result. Its JSON output marks `query.source` as `pane`.
+
+### Safety
+- The scrollback is read only when a person types the command in a terminal, only for that pane, and only for the search. It is never stored, logged, printed or sent anywhere. Without a terminal, `find --from-pane` exits with status 4 and reads nothing.
+- A match that is still running in another pane is refused (status 5) instead of being opened twice.
+
 ## [0.2.0] - 2026-10-12
 
 Makes agent-resurrect safe and predictable for AI agents and scripts, turns the Claude Code plugin into a complete install route, changes only iTerm2's window setting instead of a macOS-wide one, and fixes every confirmed bug from the 0.1.0 review. Still macOS, iTerm2 and Claude Code only.
@@ -83,6 +93,7 @@ First release. Supports Claude Code in iTerm2 on macOS.
 - Installer settings, each with an exact revert: macOS keeps windows on quit, iTerm2 restores windows at launch, iTerm2 opens at login (LaunchAgent), the shell rc block, and the Claude Code plugin. Original values are saved in a manifest before anything changes, and `agent-resurrect uninstall` restores every one.
 - Adapter interfaces for agents and terminals, so other agents and terminals can be added later.
 
-[Unreleased]: https://github.com/imgovind/agent-resurrect/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/imgovind/agent-resurrect/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.2.1
 [0.2.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.2.0
 [0.1.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.1.0

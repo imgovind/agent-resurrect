@@ -218,10 +218,10 @@ A pane whose session is still running is left alone. If the session's transcript
 
 | Command | What it does |
 |---|---|
-| `agent-resurrect` or `agent-resurrect here [--print]` | Resume the session that died in this pane, now, with no countdown. Works after you skipped the countdown. If this pane has nothing recorded, it lists what can be resumed and exits with status 3. `--print` prints the resume command instead of running it. Needs a terminal: without one it prints the command and exits with status 4. |
+| `agent-resurrect` or `agent-resurrect here [--print]` | Resume the session that died in this pane, now, with no countdown. Works after you skipped the countdown. If this pane has nothing recorded, it offers to search this pane's scrollback for the session that ran here (iTerm2), shows the match and asks before resuming it; otherwise it lists what can be resumed and exits with status 3. `--print` prints the resume command instead of running it. Needs a terminal: without one it prints the command and exits with status 4. |
 | `agent-resurrect ls [--all] [--ids]` | List sessions you can resume, numbered, newest first: agent, title, folder, last active, pane and status. `--all` includes sessions that are still running; `--ids` adds each session id. |
 | `agent-resurrect resume <session-id or n> [--print]` | Resume any Claude Code session by its id, or a listed session by its number, in the current pane. Numbers come from the last `ls` and can change when another pane records a session; ids never change. `--print` prints the command instead. Needs a terminal, like `here`. A session whose agent is still running (status 5) or whose transcript is gone (status 6) is refused, with the reason on stderr. |
-| `agent-resurrect find [text] [--clipboard] [--limit N]` | Find the session that contains some text you remember or copied, and print its resume command. The text comes from the arguments, the clipboard, or stdin. Shows up to `N` candidates (default 5), by title and session id. It never starts anything. |
+| `agent-resurrect find [text] [--clipboard] [--from-pane] [--limit N]` | Find the session that contains some text you remember or copied, and print its resume command. The text comes from the arguments, the clipboard, stdin, or with `--from-pane` this pane's recent scrollback (iTerm2), so nothing needs to be copied. Shows up to `N` candidates (default 5), by title and session id. It never starts anything. |
 | `agent-resurrect simulate [--assume-restart] [--pane-key KEY]` | Show what each recorded pane, or one pane, would do at its next first prompt, without launching or changing anything. `--assume-restart` treats every recorded agent as stopped, as a restart would. |
 | `agent-resurrect adopt` | Record the Claude Code session this command runs under. For sessions that were already running when you installed. |
 | `agent-resurrect doctor [--strict]` | Check every setting agent-resurrect needs, the plugin and your PATH, and report restores since the last boot. Prints a fix for anything that fails. `--strict` also fails on warnings. See [Troubleshooting](#troubleshooting). |
@@ -238,12 +238,19 @@ Examples you can paste:
 agent-resurrect ls --ids
 agent-resurrect resume 11111111-2222-3333-4444-555555555555
 agent-resurrect find --clipboard
+agent-resurrect find --from-pane
 agent-resurrect find "rename the users table migration"
 pbpaste | agent-resurrect find
 agent-resurrect config auto_resume ask
 ```
 
-`find` searches your Claude Code transcripts, so it also covers sessions started before you installed agent-resurrect or outside iTerm2. Inside Claude Code, the plugin's `resume-session` skill does the same work when you say things like "I lost my Claude session" or paste text from an old conversation; you can also run it as `/agent-resurrect:resume-session` followed by the text. It prints the resume command for you to run; it never starts the session itself.
+`find` searches your Claude Code transcripts, so it also covers sessions started before you installed agent-resurrect or outside iTerm2.
+
+### Find the session from what is on screen
+
+After a restart, iTerm2 brings back each pane's old scrollback, so the conversation that died is usually still visible above the prompt. If a pane has no record, for example because the session started before you installed agent-resurrect, run `agent-resurrect` in that pane and answer yes when it asks to search the scrollback. It reads the last 2,000 lines of that pane only, finds the matching Claude Code session, shows it, and asks before resuming it (yes by default for a strong match, no for a weak or ambiguous one). A session that is still running in another pane is refused instead of being opened twice. `agent-resurrect find --from-pane` does the same search and only prints the result.
+
+The scrollback is read through iTerm2's AppleScript interface, only when you type the command in a terminal (scripts and tools without a terminal are refused with status 4), and only for the pane you run it in. It is used for the search and nothing else: it is never stored, logged, printed or sent anywhere. Inside Claude Code, the plugin's `resume-session` skill does the same work when you say things like "I lost my Claude session" or paste text from an old conversation; you can also run it as `/agent-resurrect:resume-session` followed by the text. It prints the resume command for you to run; it never starts the session itself.
 
 ## Configuration
 

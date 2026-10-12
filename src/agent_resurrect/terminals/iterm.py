@@ -13,8 +13,10 @@ TERM_PROGRAM is "iTerm.app" (tmux and editors set their own) and none of TMUX, S
 set (screen and Zellij keep the inherited TERM_PROGRAM). The snippets apply the same test.
 """
 import re
+import subprocess
 from typing import TYPE_CHECKING, List, Mapping, Optional, Tuple
 
+from .. import logs
 from .base import TerminalAdapter
 
 if TYPE_CHECKING:
@@ -24,6 +26,24 @@ GUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}")
 KEY_PREFIX = "iterm-"
 TERM_PROGRAM = "iTerm.app"
 MULTIPLEXER_VARIABLES = ("TMUX", "STY", "ZELLIJ")  # tmux, GNU screen, Zellij
+
+# Reads one pane's text through iTerm2's AppleScript interface. The pane's GUID arrives as an argument
+# (`osascript - <guid>`), never spliced into the script source.
+PANE_TEXT_SCRIPT = """on run argv
+    set wanted to item 1 of argv
+    tell application "iTerm2"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if (unique id of s) is wanted then return text of s
+                end repeat
+            end repeat
+        end repeat
+    end tell
+    return ""
+end run
+"""
+PANE_TEXT_TIMEOUT = 15  # seconds
 
 
 def _split(env: Mapping[str, str]) -> Tuple[str, str, str]:
@@ -56,6 +76,23 @@ class ITermAdapter(TerminalAdapter):
     def pane_label(self, env: Mapping[str, str]) -> Optional[str]:
         label, sep, _ = _split(env)
         return label if sep and label else None
+
+    def pane_text(self, env: Mapping[str, str], max_lines: int = 2000) -> Optional[str]:
+        key = self.pane_key(env)
+        if key is None:
+            return None
+        try:
+            result = subprocess.run(["osascript", "-", key[len(KEY_PREFIX):]], input=PANE_TEXT_SCRIPT,
+                                    capture_output=True, text=True, timeout=PANE_TEXT_TIMEOUT)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logs.log(f"iterm: could not read the pane's text: {type(exc).__name__}")
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            # Only the exit status is logged: the pane's text never reaches the log.
+            logs.log(f"iterm: could not read the pane's text (osascript exit {result.returncode})")
+            return None
+        lines = result.stdout.splitlines()
+        return "\n".join(lines[-max_lines:] if max_lines > 0 else lines)
 
     def settings(self) -> List["Setting"]:
         # Imported here so that detecting a pane (on every hook call) never loads the settings code.

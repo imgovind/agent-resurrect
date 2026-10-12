@@ -23,6 +23,12 @@ class TerminalAdapter(ABC):
     def pane_label(self, env: Mapping[str, str]) -> Optional[str]:
         """Short display label, e.g. "w0t12p0". Display only, never used as a key."""
 
+    def pane_text(self, env: Mapping[str, str], max_lines: int = 2000) -> Optional[str]:
+        """The last `max_lines` lines of this pane's scrollback, read only when the user asks agent-resurrect to
+        find the session that ran in this pane. The text goes back to the caller only: never stored, logged or
+        printed. None when the terminal cannot provide it (the default)."""
+        return None
+
     def settings(self) -> List["Setting"]:
         """System settings this terminal needs for panes to be restored. Empty by default."""
         return []

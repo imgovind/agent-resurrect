@@ -3,39 +3,127 @@
   "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/find.schema.json",
   "title": "agent-resurrect find --json",
   "description": "Sessions whose history contains the text. confidence: strong; weak (one probe of several matched); ambiguous (the runner-up has as many hits); none (exit 3, best is null). candidates lists every match, best first. Resume a candidate by its session_id, never by position.",
-  "allOf": [{"$ref": "envelope.schema.json"}],
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
   "properties": {
-    "schema": {"const": "agent-resurrect.find/1"},
+    "schema": {
+      "const": "agent-resurrect.find/1"
+    },
     "query": {
       "type": "object",
-      "required": ["characters", "probes"],
+      "required": [
+        "characters",
+        "probes"
+      ],
       "properties": {
-        "characters": {"type": "integer", "minimum": 0},
-        "probes": {"type": ["integer", "null"], "description": "search probes built from the text; null when nothing matched"}
+        "characters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "search probes built from the text; null when nothing matched"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "pane"
+          ],
+          "description": "present when the text came from this pane's scrollback (--from-pane)"
+        }
       }
     },
-    "confidence": {"enum": ["strong", "weak", "ambiguous", "none"]},
-    "best": {"anyOf": [{"$ref": "#/$defs/match"}, {"type": "null"}]},
-    "candidates": {"type": "array", "items": {"$ref": "#/$defs/match"}}
+    "confidence": {
+      "enum": [
+        "strong",
+        "weak",
+        "ambiguous",
+        "none"
+      ]
+    },
+    "best": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/match"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/match"
+      }
+    }
   },
-  "if": {"properties": {"ok": {"const": true}}},
-  "then": {"required": ["query", "confidence", "best", "candidates"]},
+  "if": {
+    "properties": {
+      "ok": {
+        "const": true
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "query",
+      "confidence",
+      "best",
+      "candidates"
+    ]
+  },
   "$defs": {
     "match": {
       "type": "object",
-      "required": ["hits", "total_probes", "roles", "in_conversation", "cwd_trusted", "session"],
+      "required": [
+        "hits",
+        "total_probes",
+        "roles",
+        "in_conversation",
+        "cwd_trusted",
+        "session"
+      ],
       "properties": {
-        "hits": {"type": "integer", "minimum": 0},
-        "total_probes": {"type": "integer", "minimum": 0},
+        "hits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_probes": {
+          "type": "integer",
+          "minimum": 0
+        },
         "roles": {
           "description": "How many matching transcript records each author wrote",
           "type": "object",
-          "required": ["user", "assistant", "tool_output", "injected_context", "other"],
-          "additionalProperties": {"type": "integer"}
+          "required": [
+            "user",
+            "assistant",
+            "tool_output",
+            "injected_context",
+            "other"
+          ],
+          "additionalProperties": {
+            "type": "integer"
+          }
         },
-        "in_conversation": {"type": "boolean", "description": "false when the text appears only in tool output or injected context"},
-        "cwd_trusted": {"type": "boolean", "description": "the cwd matches the transcript's project folder"},
-        "session": {"$ref": "session.schema.json"}
+        "in_conversation": {
+          "type": "boolean",
+          "description": "false when the text appears only in tool output or injected context"
+        },
+        "cwd_trusted": {
+          "type": "boolean",
+          "description": "the cwd matches the transcript's project folder"
+        },
+        "session": {
+          "$ref": "session.schema.json"
+        }
       }
     }
   }

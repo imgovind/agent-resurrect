@@ -32,12 +32,17 @@ from .model import Candidate, Record, SessionInfo, parse_iso
 from .procs import Procs
 from .settings import all_settings
 from .terminals import detect_terminal
+from .terminals.base import TerminalAdapter
 
 PROG = "agent-resurrect"
 HOOK_STDIN_LIMIT = 1024 * 1024
 PLUGIN_SETTING = "claude.plugin"
 NO_MATCH = ("No session contains that text. Try a different snippet: plain prose from one line, "
             "not a table, code block or heavily formatted output.")
+NOTHING_RECORDED = "Nothing recorded for this pane."
+PANE_LINES = 2000  # recent scrollback lines searched by --from-pane and the `here` fallback
+PANE_UNREADABLE = ("cannot read this pane's scrollback; this works in an iTerm2 pane (not inside tmux, screen "
+                   "or zellij). Search by text instead: agent-resurrect find \"text you remember\"")
 EXIT_CODES = ("Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 needs a terminal (or --yes), 5 still running, "
               "6 transcript gone, 130 interrupted. With --json every command prints one JSON object "
               "(schemas in docs/json/).")
@@ -347,10 +352,48 @@ def cmd_here(args: argparse.Namespace) -> int:
         pane = None if pane_key is None else {"terminal": terminal.name, "key": pane_key,
                                               "label": terminal.pane_label(os.environ)}
         return _emit("here", NOT_FOUND, message, action=None, pane=pane, session=None)
-    print("Nothing recorded for this pane.")
+    print(NOTHING_RECORDED)
+    if pane_key is not None and _reads_pane_text(terminal) and not args.print:
+        if restore.has_terminal():
+            if _confirm("Search this pane's scrollback for the session that ran here? [Y/n] "):
+                return _here_from_pane(args)
+        else:  # never prompt without a terminal; say how instead
+            _say(f"To search this pane's scrollback for the session, run: {PROG} find --from-pane")
     print()
     _show_listing(include_running=False)
     return NOT_FOUND
+
+
+def _here_from_pane(args: argparse.Namespace) -> int:
+    """`here` with nothing recorded: search this pane's scrollback, show the match, and resume it only after
+    the user says yes (default yes only for a strong match)."""
+    text = _pane_scrollback(marker=NOTHING_RECORDED)
+    if not text or not text.strip():
+        _error(PANE_UNREADABLE if text is None else "this pane's scrollback is empty; nothing to search")
+        return NOT_FOUND
+    try:
+        found = _search(text, limit=5)
+    except ValueError as exc:
+        _error(str(exc))
+        return NOT_FOUND
+    if not found:
+        print(NO_MATCH)
+        return NOT_FOUND
+    agent, best = found[0]
+    confidence = views.confidence([c for _, c in found])
+    print()
+    _print_best(agent, best, confidence)
+    _print_others(found)
+    print()
+    strong = confidence == "strong"
+    if not _confirm("Resume it here? [Y/n] " if strong else "Resume the best match here anyway? [y/N] ",
+                    default=strong):
+        _say(f"Not resumed. Resume it later with: {PROG} resume {best.session_id}")
+        return OK
+    # A stored record carries the agent's pid, so a session still running in another pane is refused (busy)
+    # instead of being opened twice.
+    record = _record_for_session(best.session_id) or views.candidate_record(agent, best)
+    return _resume(args, "here", record)
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
@@ -473,6 +516,32 @@ def _read_clipboard() -> Optional[str]:
     return result.stdout if result.returncode == 0 else None
 
 
+def _reads_pane_text(terminal) -> bool:
+    """True if this terminal adapter can return a pane's scrollback (it overrides TerminalAdapter.pane_text)."""
+    return terminal is not None and type(terminal).pane_text is not TerminalAdapter.pane_text
+
+
+def _pane_scrollback(marker: str) -> Optional[str]:
+    """This pane's recent scrollback, to search for the session that ran here; None if it cannot be read.
+    The text is only searched: never stored, logged or printed. Everything from the last line containing
+    `marker` (the command doing the reading) onward is dropped, as are trailing agent-resurrect command lines,
+    so the search sees what was in the pane before."""
+    terminal, key = _pane_context()
+    if key is None or not _reads_pane_text(terminal):
+        return None
+    text = terminal.pane_text(os.environ, max_lines=PANE_LINES)
+    if text is None:
+        return None
+    lines = text.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if marker in lines[index]:
+            del lines[index:]
+            break
+    while lines and (not lines[-1].strip() or PROG in lines[-1]):
+        lines.pop()
+    return "\n".join(lines)
+
+
 def _find_text(args: argparse.Namespace) -> Optional[str]:
     """The text to search for, or None if the clipboard cannot be read."""
     if args.clipboard:
@@ -521,24 +590,54 @@ def _print_best(agent: AgentAdapter, best: Candidate, confidence: str) -> None:
     _say(f"  {restore.format_command(plan)}")
 
 
-def cmd_find(args: argparse.Namespace) -> int:
-    """Print the sessions whose history contains the text and how to resume the best one. Never launches."""
-    text = _find_text(args)
-    if text is None:
-        return _fail(args, "find", ERROR, "cannot read the clipboard (pbpaste failed)")
-    query = {"characters": len(text), "probes": None}
-    if not text.strip():
-        return _fail(args, "find", USAGE, "no text to search for; pass it as arguments, pipe it on stdin, "
-                                          "or use --clipboard", query=query)
+def _search(text: str, limit: int) -> List[Tuple[AgentAdapter, Candidate]]:
+    """Sessions whose history contains the text, best first. Raises ValueError when the text is too short."""
     found: List[Tuple[AgentAdapter, Candidate]] = []
-    try:
-        for agent in all_agents():
-            found.extend((agent, c) for c in agent.find_by_text(text, limit=args.limit))
-    except ValueError as exc:  # e.g. too little text to build search probes from
-        return _fail(args, "find", USAGE, str(exc), query=query)
+    for agent in all_agents():
+        found.extend((agent, c) for c in agent.find_by_text(text, limit=limit))
     # Each agent ranks its own results; across agents, higher probe coverage first (stable sort).
     found.sort(key=lambda item: -(item[1].hits / max(item[1].total_probes, 1)))
-    found = found[:args.limit]
+    return found[:limit]
+
+
+def _print_others(found: List[Tuple[AgentAdapter, Candidate]]) -> None:
+    if len(found) < 2:
+        return
+    # Unnumbered on purpose: `resume <n>` takes numbers from `ls`, so a number here would resume another
+    # session. Each candidate starts with its session id, which is what `resume` should be given.
+    print("\nOther candidates:")
+    for _, c in found[1:]:
+        when = _local_time(iso=c.info.started) or _local_time(epoch=c.info.last_active) or ""
+        title = _one_line(c.info.title or c.info.first_prompt, 60)
+        _say(f"  {c.session_id}  {c.hits}/{c.total_probes}  [{_roles(c.roles)}]  {when}  {title}".rstrip())
+    print(f"\nResume one of them with: {PROG} resume <session id>")
+
+
+def cmd_find(args: argparse.Namespace) -> int:
+    """Print the sessions whose history contains the text and how to resume the best one. Never launches."""
+    if args.from_pane:
+        if not restore.has_terminal():  # a person typed it: never read a pane on behalf of a script or tool
+            return _fail(args, "find", NEEDS_TTY,
+                         "--from-pane reads this pane's scrollback, so it only runs when you type it in a terminal",
+                         query={"characters": 0, "probes": None, "source": "pane"})
+        text = _pane_scrollback(marker="--from-pane")
+        if text is None:
+            return _fail(args, "find", ERROR, PANE_UNREADABLE,
+                         query={"characters": 0, "probes": None, "source": "pane"})
+    else:
+        text = _find_text(args)
+        if text is None:
+            return _fail(args, "find", ERROR, "cannot read the clipboard (pbpaste failed)")
+    query = {"characters": len(text), "probes": None}
+    if args.from_pane:
+        query["source"] = "pane"
+    if not text.strip():
+        return _fail(args, "find", USAGE, "no text to search for; pass it as arguments, pipe it on stdin, "
+                                          "or use --clipboard or --from-pane", query=query)
+    try:
+        found = _search(text, args.limit)
+    except ValueError as exc:  # e.g. too little text to build search probes from
+        return _fail(args, "find", USAGE, str(exc), query=query)
     confidence = views.confidence([c for _, c in found])
     if args.json:
         cfg = load_config()
@@ -552,15 +651,7 @@ def cmd_find(args: argparse.Namespace) -> int:
         return NOT_FOUND
     agent, best = found[0]
     _print_best(agent, best, confidence)
-    if len(found) > 1:
-        # Unnumbered on purpose: `resume <n>` takes numbers from `ls`, so a number here would resume another
-        # session. Each candidate starts with its session id, which is what `resume` should be given.
-        print("\nOther candidates:")
-        for _, c in found[1:]:
-            when = _local_time(iso=c.info.started) or _local_time(epoch=c.info.last_active) or ""
-            title = _one_line(c.info.title or c.info.first_prompt, 60)
-            _say(f"  {c.session_id}  {c.hits}/{c.total_probes}  [{_roles(c.roles)}]  {when}  {title}".rstrip())
-        print(f"\nResume one of them with: {PROG} resume <session id>")
+    _print_others(found)
     return OK
 
 
@@ -745,6 +836,8 @@ def _parser() -> argparse.ArgumentParser:
     find = sub.add_parser("find", help="find a session by text from its conversation and print its resume command")
     find.add_argument("text", nargs="*", help="text to search for (default: stdin)")
     find.add_argument("--clipboard", action="store_true", help="search for the text on the clipboard")
+    find.add_argument("--from-pane", action="store_true",
+                      help="search this pane's recent scrollback (iTerm2), so nothing needs to be copied")
     find.add_argument("--limit", type=_positive_int, default=5, help="candidates to show (default 5)")
     _json_flag(find)
     simulate = sub.add_parser("simulate", help="show what automatic restore would do in each recorded pane, "
