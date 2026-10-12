@@ -250,7 +250,7 @@ A double-click `.pkg` or `.command` is deferred: unsigned downloads are blocked 
 |---|---|---|---|
 | `macos.keep_windows` | macOS "Close windows when quitting an application" off | `defaults write -g NSQuitAlwaysKeepsWindows -bool true` | Restore the original value, or delete the key if it was absent |
 | `iterm.restore_policy` | iTerm2 restores windows at launch ("Use System Window Restoration Setting") | `defaults write com.googlecode.iterm2 OpenArrangementAtStartup -bool false` and `OpenNoWindowsAtStartup -bool false` | Restore originals |
-| `iterm.launch_at_login` | iTerm2 opens at login | LaunchAgent `~/Library/LaunchAgents/io.github.imgovind.agent-resurrect.iterm.plist` running `/usr/bin/open -a iTerm` at load, then `launchctl bootstrap gui/$UID` | `bootout` and delete |
+| `iterm.launch_at_login` | iTerm2 opens at login | LaunchAgent `~/Library/LaunchAgents/io.github.imgovind.agent-resurrect.iterm.plist` running `/usr/bin/open -a iTerm` at load. Install only writes it: `launchctl bootstrap` would run it at once and pull iTerm2 to the front, so launchd loads it at the next login | `bootout` (ignoring "not loaded") and delete |
 | `shell.zsh`, `shell.bash` | rc block present | Append a block between `# >>> agent-resurrect >>>` and `# <<< agent-resurrect <<<` | Remove exactly that block |
 | `claude.plugin` | Plugin installed and enabled | `claude plugin marketplace add ~/.local/share/agent-resurrect`, then `claude plugin install agent-resurrect@agent-resurrect` | Uninstall the plugin and remove the marketplace |
 

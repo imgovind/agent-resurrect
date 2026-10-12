@@ -197,7 +197,9 @@ class DefaultsSettingTest(unittest.TestCase):
 
 
 class LaunchAgentSettingTest(unittest.TestCase):
-    def test_launch_agent_plist_and_bootstrap(self):
+    def test_launch_agent_plist_written_but_not_loaded(self):
+        # Loading it now (launchctl bootstrap) would run RunAtLoad at once: `open -a iTerm` would pull iTerm2 to
+        # the front in the middle of the install. macOS loads ~/Library/LaunchAgents at the next login.
         with fake_system() as fs:
             setting = ITermLaunchAtLogin()
             self.assertEqual(setting.id, "iterm.launch_at_login")
@@ -211,15 +213,25 @@ class LaunchAgentSettingTest(unittest.TestCase):
                               "RunAtLoad": True, "LimitLoadToSessionType": "Aqua"})
             self.assertTrue(setting.check().ok)
             uid = os.getuid()
-            self.assertEqual(fs.calls("launchctl"), [["bootstrap", f"gui/{uid}", str(plist)]])
+            self.assertEqual(fs.calls("launchctl"), [])
 
-            self.assertIsNone(setting.apply())  # idempotent: no rewrite, no second bootstrap
-            self.assertEqual(len(fs.calls("launchctl")), 1)
+            self.assertIsNone(setting.apply())  # idempotent: no rewrite
+            self.assertEqual(fs.calls("launchctl"), [])
 
             setting.revert(original)
-            self.assertEqual(fs.calls("launchctl")[-1], ["bootout", f"gui/{uid}/{LABEL}"])
+            self.assertEqual(fs.calls("launchctl"), [["bootout", f"gui/{uid}/{LABEL}"]])
             self.assertFalse(plist.exists())
             self.assertFalse(setting.check().ok)
+
+    def test_launch_agent_upgrade_rewrites_the_plist_without_loading_it(self):
+        with fake_system() as fs:
+            plist = fs.home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+            plist.parent.mkdir(parents=True)
+            plist.write_bytes(plistlib.dumps({"Label": LABEL, "ProgramArguments": ["/usr/bin/open", "-a", "iTerm2"]}))
+            self.assertFalse(ITermLaunchAtLogin().check().ok)
+            self.assertIsNone(ITermLaunchAtLogin().apply())  # ours from an earlier install: keep its first original
+            self.assertTrue(ITermLaunchAtLogin().check().ok)
+            self.assertEqual(fs.calls("launchctl"), [])
 
     def test_launch_agent_already_loaded_is_fine(self):
         with fake_system():

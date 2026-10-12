@@ -68,7 +68,8 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess:
 
 class ITermLaunchAtLogin(Setting):
     """A LaunchAgent that runs `open -a iTerm` at login. It needs no Automation permission, and if macOS
-    reopens iTerm2 as well, `open -a` is harmless."""
+    reopens iTerm2 as well, `open -a` is harmless. Install only writes the plist; launchd loads it at the
+    next login. Uninstall unloads it (if loaded) and deletes it."""
 
     id = "iterm.launch_at_login"
     description = f"Open iTerm2 at login (LaunchAgent {LABEL})"
@@ -98,12 +99,9 @@ class ITermLaunchAtLogin(Setting):
         with open(tmp, "wb") as fh:
             plistlib.dump(desired_plist(), fh)
         os.replace(tmp, path)
-        uid = os.getuid()
-        if existed:
-            _launchctl("bootout", f"gui/{uid}/{LABEL}")
-        proc = _launchctl("bootstrap", f"gui/{uid}", str(path))
-        if proc.returncode != 0:  # usually "already loaded"; the agent is loaded at the next login anyway
-            log(f"launchctl bootstrap {LABEL} exited {proc.returncode}: {proc.stderr.strip()}")
+        # Deliberately not `launchctl bootstrap`: RunAtLoad would run `open -a iTerm` right now and pull iTerm2
+        # to the front mid-install. launchd loads ~/Library/LaunchAgents at the next login, which is when it
+        # is needed. An already loaded older copy is harmless: it only ever ran once, at its own load.
         return None if existed else {"existed": False}
 
     def revert(self, original: dict) -> None:
