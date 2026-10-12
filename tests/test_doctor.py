@@ -109,7 +109,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertNotRegex(out.replace("\n", ""), r"[\x00-\x1f\x7f-\x9f]")
         self.assertIn("OK    fake pane p1?]52;c;ZXZpbA==??2J", out)
-        self.assertEqual(doctor.printable("a\x1bb\tc‍d"), "a?b?c‍d")  # zero-width joiner (emoji) kept
+        self.assertEqual(doctor.printable("a\x1bb\tc\u200dd"), "a?b?c\u200dd")  # zero-width joiner (emoji) kept
 
     def test_boot_time_parsing_uses_sec_not_usec(self):
         text = "{ sec = 1791785041, usec = 851234 } Mon Oct 12 11:34:01 2026"
