@@ -13,6 +13,7 @@ Makes agent-resurrect safe and predictable for AI agents and scripts, turns the 
 - Run the install line again. Your records, config and saved original settings are kept.
 - 0.1.0 turned off the macOS-wide "Close windows when quitting an application" setting. 0.2.0 puts your original value back and sets the same preference in iTerm2's own domain instead, so other apps behave as they did before you installed.
 - Exit codes changed: "not found" is now 3 instead of 1, and a session that is still running or whose transcript is gone now exits 5 or 6. Scripts that checked for 1 need updating; see the README's exit code table.
+- `install` run without a terminal now needs `--yes`, as `uninstall` already did; 0.1.0 went ahead without asking.
 - The `resume-by-text` skill is now `resume-session` (`/agent-resurrect:resume-session`).
 - The one-line installer moved to `https://github.com/imgovind/agent-resurrect/releases/latest/download/install.sh`.
 
@@ -39,6 +40,10 @@ Makes agent-resurrect safe and predictable for AI agents and scripts, turns the 
 
 - The window setting is now `iterm.keep_windows`, which writes `NSQuitAlwaysKeepsWindows` in iTerm2's preferences only. It replaces `macos.keep_windows`, and both install and uninstall migrate a 0.1.0 manifest entry by restoring your global value.
 - `resume`, `here` and the bare command never start an agent without a terminal on stdin and stdout. They print the resume command, change nothing, and exit 4.
+- `--json` on `resume`, `here` and the bare command implies `--print`: it prints one document with `action` `printed` and the resume command, exits 0 when the session can be resumed, and never starts anything, with or without a terminal. A session that is still running or gone, or an unknown id, still exits 5, 6 or 3.
+- `install` and `uninstall` need `--yes` when they cannot ask (no terminal, or `--json`), and exit 4 otherwise. `--dry-run` never asks.
+- `here` (and the bare command) in a pane with nothing recorded still lists what can be resumed, and now exits 3 instead of 0.
+- `resume` and `here` print "still running" and "no longer exists" refusals on stderr, with exit 5 and 6, instead of on stdout with exit 1.
 - `find` lists other candidates by title and session id, without numbers, because `resume <n>` reads numbers from `ls`.
 - The resume skill is now `resume-session` and also handles "my sessions are gone after a restart" by listing what died. It prints commands and never runs them.
 - The install prompt for Claude Code downloads the installer once, runs a dry run, waits for your OK, runs the same file it read, and acts only on doctor fixes marked safe for an agent.
@@ -59,6 +64,7 @@ Makes agent-resurrect safe and predictable for AI agents and scripts, turns the 
 - The SessionEnd hook returns at once unless a deliberate exit ends the pane's recorded session, so it stays well inside Claude Code's time limit for that hook.
 - Opening a pane or running `ls` read whole transcripts, which took about half a second for very large ones. Only the start and end of a transcript are read now.
 - Agent-team teammate processes are excluded from recording on purpose, not by accident.
+- `ls`, `resume <n>`, `doctor` and automatic restore deleted records older than `max_age_days` even while their session was still running, so a session that ran for weeks without restarting lost its record. Records of running sessions are now kept.
 
 ## [0.1.0] - 2026-10-12
 

@@ -8,7 +8,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agent-resurrect ls *), Bash(${CLAU
 
 # Resume a session
 
-Find the session, then give the user the command that resumes it. **Never run that command yourself.** Never run `agent-resurrect` with no arguments, `agent-resurrect here` or `agent-resurrect resume` either: each one starts an interactive agent in place of the command, and refuses when there is no terminal.
+Find the session, then give the user the command that resumes it. **Never run that command yourself.** Never run `agent-resurrect` with no arguments, `agent-resurrect here` or `agent-resurrect resume` either: on a terminal each one starts an interactive agent in place of the command. The two commands below give you everything you need.
 
 Run the tool exactly as written below, by this plugin's own path. It works even when `agent-resurrect` is not on your PATH, and its `--json` output is the same in every version of this skill. Both commands only read: they change nothing.
 

@@ -153,7 +153,7 @@ Before launching, it marks the record `consumed` so a crash loop cannot re-trigg
 | `agent-resurrect doctor` | Check every required setting, the hook installation, PATH, and the last restore's GUID matches; print a fix for each failure. |
 | `agent-resurrect uninstall [--purge]` | Revert everything from the manifest; `--purge` also deletes records and logs. |
 
-> **Superseded in 0.2.0:** the command set, flags, exit codes and `--json` documents are in the README (Commands, For AI coding agents). New in 0.2.0: `simulate`, `adopt`, `version`, `ls --ids`, `--print` on `resume` and `here`, `--dry-run` on `install` and `uninstall`, `install --no-plugin`, `doctor --strict`, and `--json` on every user command. `resume`, `here` and the bare command never launch an agent without a terminal: they print the command and exit 4.
+> **Superseded in 0.2.0:** the command set, flags, exit codes and `--json` documents are in the README (Commands, For AI coding agents). New in 0.2.0: `simulate`, `adopt`, `version`, `ls --ids`, `--print` on `resume` and `here`, `--dry-run` on `install` and `uninstall`, `install --no-plugin`, `doctor --strict`, and `--json` on every user command. `resume`, `here` and the bare command never launch an agent without a terminal: they print the command and exit 4. With `--json` (which implies `--print`) they never launch at all.
 
 ### 6.4 Shell-level recorder (designed now, built with the first non-Claude agent)
 
@@ -360,7 +360,7 @@ agent-resurrect/
 
 - `--json` on `ls`, `find`, `doctor`, `install`, `uninstall`, `config`, `resume`, `here`, `simulate`, `adopt` and `version`. Exactly one ASCII JSON object on stdout with `schema` (`agent-resurrect.<command>/1`), `version`, `ok` and `error`; fields within `/1` are only added. Schemas are in `docs/json/`.
 - Exit codes: 0 `ok`, 1 `error`, 2 `usage`, 3 `not-found`, 4 `needs-tty`, 5 `busy`, 6 `gone`, 130 `interrupted` (`agent_resurrect.exitcodes`). `hook` always exits 0 and prints nothing.
-- `resume`, `here` and the bare command never launch without a terminal (exit 4, command printed, no state change); `--print` returns the command with exit 0.
+- `resume`, `here` and the bare command never launch without a terminal (exit 4, command printed, no state change); `--print` returns the command with exit 0, and so does `--json`, which implies `--print` and never launches.
 - `find` no longer numbers its candidates (the numbers meant something else to `resume <n>`); `ls --ids` shows session ids.
 - New commands: `simulate [--assume-restart] [--pane-key KEY]` runs the eligibility rules of section 7 without launching or changing anything; with `--assume-restart` rule 2 is skipped, because a restart ends every agent. `adopt` records the Claude Code session the command runs under, through the same path as SessionStart (session id from `CLAUDE_CODE_SESSION_ID`, agent from the first `claude` ancestor, cwd and permission mode from the transcript, `source` `adopt`). `version` prints the version.
 - `doctor --json` gives each check a stable id and a `fix` with `kind` (`command`, `new-shell`, `restart-agent`, `user-action`, `install-app`), `agent_may_run` and `argv`, plus a `ready` verdict; `--strict` turns warnings into failures. New checks: a login shell other than zsh or bash, running inside tmux, screen or zellij, an un-exported `ZDOTDIR`, and a `.zshrc` that starts tmux before the agent-resurrect block.

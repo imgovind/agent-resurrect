@@ -8,7 +8,7 @@ Resume your Claude Code sessions in the same iTerm2 panes after your Mac restart
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![iTerm2 panes resuming their own Claude Code sessions after iTerm2 reopens](docs/demo.gif)
+![iTerm2 panes resuming their own Claude Code sessions in a fresh shell](docs/demo.gif)
 
 ```text
 Resurrecting "Fix the login redirect" (claude) in /Users/me/project. Press any key to skip.
@@ -90,7 +90,14 @@ Run these three commands in a Claude Code session:
 /agent-resurrect:setup
 ```
 
-The first two install the plugin. From the next Claude Code session on, its hooks record which pane each session runs in, and `agent-resurrect ls` and `find` work in Claude Code's shell.
+The first two install the plugin. Recent Claude Code versions can add the marketplace and install the plugin in one step, from inside Claude Code or from a terminal:
+
+```text
+/plugin install agent-resurrect --marketplace imgovind/agent-resurrect
+claude plugin install agent-resurrect --marketplace imgovind/agent-resurrect
+```
+
+From the next Claude Code session on, its hooks record which pane each session runs in, and `agent-resurrect ls` and `find` work in Claude Code's shell.
 
 The plugin alone does not restore anything: the first-prompt check, the iTerm2 settings and the LaunchAgent come from the installer. `/agent-resurrect:setup` runs it. Claude only runs this skill when you type it. It shows you what the installer would change, asks before going ahead, installs from the plugin's own files (no download, no `sudo`), checks the result with `doctor`, and records the current session with `adopt`.
 
@@ -178,15 +185,9 @@ This test ends one Claude Code process the way a crash would. The conversation s
 
    You see `Resurrecting "..." (claude) in ... Press any key to skip.`, a 3 second countdown, and then the same conversation.
 
-### Full test: quit and reopen iTerm2
+If the pane does not resume, run `agent-resurrect doctor` in it and see [Troubleshooting](#troubleshooting).
 
-This runs the same sequence as a restart, minus the reboot.
-
-1. Start Claude Code in two or three panes and send each one a message.
-2. Quit iTerm2 with Cmd-Q and confirm that it may close the running sessions.
-3. Open iTerm2 again. It restores your windows and panes, and each pane that was running Claude Code counts down and resumes its own session.
-
-If a pane does not resume, run `agent-resurrect doctor` in it and see [Troubleshooting](#troubleshooting).
+Quitting iTerm2 with Cmd-Q and reopening it is not a reliable stand-in for a restart: depending on the iTerm2 version and its settings, the sessions may keep running through the quit, so there is nothing to resume. Use the test above, or `simulate --assume-restart`.
 
 ## Restore Claude Code sessions after a reboot in iTerm2
 
@@ -217,19 +218,19 @@ A pane whose session is still running is left alone. If the session's transcript
 
 | Command | What it does |
 |---|---|
-| `agent-resurrect` or `agent-resurrect here` | Resume the session that died in this pane, now, with no countdown. Works after you skipped the countdown. If this pane has nothing recorded, it lists what can be resumed. `--print` prints the resume command instead of running it. |
+| `agent-resurrect` or `agent-resurrect here [--print]` | Resume the session that died in this pane, now, with no countdown. Works after you skipped the countdown. If this pane has nothing recorded, it lists what can be resumed and exits with status 3. `--print` prints the resume command instead of running it. Needs a terminal: without one it prints the command and exits with status 4. |
 | `agent-resurrect ls [--all] [--ids]` | List sessions you can resume, numbered, newest first: agent, title, folder, last active, pane and status. `--all` includes sessions that are still running; `--ids` adds each session id. |
-| `agent-resurrect resume <session-id or n> [--print]` | Resume any Claude Code session by its id, or a listed session by its number, in the current pane. Numbers come from the last `ls` and can change when another pane records a session; ids never change. `--print` prints the command instead. |
-| `agent-resurrect find [text] [--clipboard] [--limit N]` | Find the session that contains some text you remember or copied, and print its resume command. Shows up to `N` candidates (default 5), by title and session id. It never starts anything. |
+| `agent-resurrect resume <session-id or n> [--print]` | Resume any Claude Code session by its id, or a listed session by its number, in the current pane. Numbers come from the last `ls` and can change when another pane records a session; ids never change. `--print` prints the command instead. Needs a terminal, like `here`. A session whose agent is still running (status 5) or whose transcript is gone (status 6) is refused, with the reason on stderr. |
+| `agent-resurrect find [text] [--clipboard] [--limit N]` | Find the session that contains some text you remember or copied, and print its resume command. The text comes from the arguments, the clipboard, or stdin. Shows up to `N` candidates (default 5), by title and session id. It never starts anything. |
 | `agent-resurrect simulate [--assume-restart] [--pane-key KEY]` | Show what each recorded pane, or one pane, would do at its next first prompt, without launching or changing anything. `--assume-restart` treats every recorded agent as stopped, as a restart would. |
 | `agent-resurrect adopt` | Record the Claude Code session this command runs under. For sessions that were already running when you installed. |
 | `agent-resurrect doctor [--strict]` | Check every setting agent-resurrect needs, the plugin and your PATH, and report restores since the last boot. Prints a fix for anything that fails. `--strict` also fails on warnings. See [Troubleshooting](#troubleshooting). |
 | `agent-resurrect config [key [value]]` | Show all settings, show one, or change one. |
-| `agent-resurrect install [--yes] [--dry-run] [--no-plugin]` | Apply the settings agent-resurrect needs, for example after you install iTerm2 or Claude Code later. It lists the changes and asks first; `--yes` skips the question. `--dry-run` shows what would change and changes nothing. `--no-plugin` leaves the Claude Code plugin out. |
-| `agent-resurrect uninstall [--yes] [--dry-run] [--purge]` | Undo everything the installer changed. It asks first; `--yes` skips the question. `--dry-run` shows what would be reverted. `--purge` also deletes records, logs and config. |
+| `agent-resurrect install [--yes] [--dry-run] [--no-plugin]` | Apply the settings agent-resurrect needs, for example after you install iTerm2 or Claude Code later. It lists the changes and asks first; `--yes` skips the question. Without a terminal, or with `--json`, it cannot ask, so it needs `--yes` (otherwise it exits with status 4). `--dry-run` shows what would change and changes nothing. `--no-plugin` leaves the Claude Code plugin out. |
+| `agent-resurrect uninstall [--yes] [--dry-run] [--purge]` | Undo everything the installer changed. It asks first; `--yes` skips the question, and without a terminal or with `--json` it needs `--yes` (otherwise status 4). `--dry-run` shows what would be reverted. `--purge` also deletes records, logs and config. |
 | `agent-resurrect version` | Print the installed version. `agent-resurrect --version` works too. |
 
-Every command above also takes `--json`; see [For AI coding agents](#for-ai-coding-agents). The `auto` and `hook` commands are used by the shell snippet and the plugin; you don't run them yourself.
+Every command above also takes `--json`; see [For AI coding agents](#for-ai-coding-agents). For `here`, `resume` and the bare command, `--json` implies `--print`: they print the resume command and never start anything. The `auto` and `hook` commands are used by the shell snippet and the plugin; you don't run them yourself.
 
 Examples you can paste:
 
@@ -271,31 +272,29 @@ Start with:
 agent-resurrect doctor
 ```
 
-Run it inside an iTerm2 pane. Each line starts with `OK`, `WARN` or `FAIL`. A `FAIL` line is followed by a `fix:` line with what to do. Doctor exits with status 1 when anything failed, and with `--strict` also when anything warned.
+Run it inside an iTerm2 pane. Each line starts with `OK`, `WARN` or `FAIL`, and a `WARN` or `FAIL` line is followed by a `fix:` line with what to do. Doctor exits with status 1 when anything failed, and with `--strict` also when anything warned. `doctor --json` gives each check below by its id.
 
 ### What doctor checks
 
 | Check | What it means when it is not OK |
 |---|---|
 | `python` | The Python agent-resurrect runs on is older than 3.9. Install Apple's command line tools with `xcode-select --install` (it opens a dialog you have to click), then run the install line again. |
-| `launcher.on_path` | `~/.local/bin` is not on your PATH in this shell. Open a new tab; the shell block adds it. |
+| `launcher.on_path` | `~/.local/bin/agent-resurrect` is not on your PATH in this shell (open a new tab; the shell block adds it), or it is missing (run the install line again). |
+| `shell.login` | Your login shell is not zsh or bash (for example fish). This is a `FAIL`: the first-prompt check only exists for zsh and bash. |
 | `iterm.keep_windows` | iTerm2 closes its windows when it quits, so there is nothing to restore after a restart. |
 | `iterm.restore_policy` | iTerm2 is set to open no windows, or a fixed arrangement, at launch, instead of restoring. |
 | `iterm.launch_at_login` | The LaunchAgent that opens iTerm2 at login is missing, or iTerm2 is not installed. |
 | `shell.zsh`, `shell.bash` | Your rc file does not load the first-prompt check, or has an outdated copy of the block. |
 | `claude.plugin` | The Claude Code plugin that records sessions is missing or disabled, so new sessions are not recorded. |
+| `shell.zdotdir` | `ZDOTDIR` is set in a way doctor does not see (for example without `export` in `~/.zshenv`), so the block went into a different `.zshrc` than the one zsh reads. |
+| `shell.exec_before_block` | Your shell rc file starts another program (`exec tmux`, `tmux attach`, `tmux new`, zellij) before the agent-resurrect block, so the block never runs in the iTerm2 pane itself. Move the block above that line. |
 | `terminal.pane` | Doctor is not running in an iTerm2 pane. Not a problem in itself, but sessions in this terminal are not recorded. |
-| `records` | How many panes have a record, how many are live (not resumed or skipped yet), how many would resume right now, and how many died in panes that did not come back. |
-| `restores.since_boot` | What each pane did since the last boot, as counts of the results below. |
+| `terminal.multiplexer` | Doctor is running inside tmux, screen or zellij. Sessions in such panes are not recorded or restored. |
+| `records` | How many panes have a record, how many are live (not resumed or skipped yet), and how many would resume right now. |
+| `restores.since_boot` | What each pane did since the last boot, as counts of the results below. A warning when an agent failed to start. |
+| `records.died_since_boot` | Sessions that were still live when the Mac last started and whose panes did not come back. `agent-resurrect ls` lists them and `agent-resurrect resume <session-id>` resumes one. |
 
-For the settings checks, `~/.local/bin/agent-resurrect install` puts everything back the way it needs to be.
-
-Doctor also warns about setups where a restore can never fire, even though every setting is in place:
-
-- Your login shell is not zsh or bash (for example fish). This is a `FAIL`: the first-prompt check only exists for zsh and bash.
-- Doctor is running inside tmux, screen or zellij. Sessions in such panes are not recorded.
-- `ZDOTDIR` is set in a way zsh does not see at startup, so the block was written to a different `.zshrc` than the one zsh reads.
-- Your `.zshrc` starts tmux (`exec tmux`, `tmux attach` or `tmux new`) before the agent-resurrect block, so the block never runs in the iTerm2 pane itself.
+For the settings checks (`iterm.*`, `shell.zsh`, `shell.bash`, `claude.plugin`), `~/.local/bin/agent-resurrect install` puts everything back the way it needs to be.
 
 ### What each restore result means
 
@@ -376,7 +375,7 @@ For panes to come back after a restart, iTerm2 has to keep and restore its windo
 | iTerm2 keeps its windows | Tells iTerm2 to keep its windows when it quits or the Mac restarts (`NSQuitAlwaysKeepsWindows` in iTerm2's own preferences). Other apps are not affected; the macOS-wide "Close windows when quitting an application" setting is left as it is. | Puts back iTerm2's original value, or removes it if it was never set. |
 | iTerm2 startup | Sets iTerm2's window restoration policy to "Use System Window Restoration Setting" (Settings, General, Startup), so it reopens your windows and panes. | Puts back your original iTerm2 values. |
 | iTerm2 at login | Adds a LaunchAgent, `~/Library/LaunchAgents/io.github.imgovind.agent-resurrect.iterm.plist`, that opens iTerm2 when you log in. macOS loads it at your next login, so installing it does not open or switch to iTerm2. It asks for no Automation permission. Skipped if iTerm2 is not installed. | Unloads it if it is loaded, and deletes the file. |
-| Shell startup | Adds a marked block to `~/.zshrc` (or `$ZDOTDIR/.zshrc`), and to `~/.bash_profile` or else `~/.bashrc` if you have one. A `~/.zshrc` is only created when zsh is your login shell. The block adds `~/.local/bin` to your PATH if it is missing and loads the first-prompt check. A symlinked rc file stays a symlink; its target is edited in place. | Removes exactly that block, leaving every other byte of the file as it was. |
+| Shell startup | Adds a marked block to `~/.zshrc` (or `$ZDOTDIR/.zshrc`), and to `~/.bash_profile` or else `~/.bashrc` if you have one. A `~/.zshrc` is only created when zsh is your login shell. The block adds `~/.local/bin` to the end of your PATH if it is missing, so your own tools keep priority, and loads the first-prompt check. A symlinked rc file stays a symlink; its target is edited in place. | Removes exactly that block, leaving every other byte of the file as it was. |
 | Claude Code plugin | Adds a local plugin marketplace from `~/.local/share/agent-resurrect` and installs the `agent-resurrect` plugin: two session hooks that record which pane a session runs in, and the `resume-session` and `setup` skills. Skipped if `claude` is not installed, if you pass `--no-plugin`, or if you already installed the plugin from GitHub. | Uninstalls the plugin and removes the marketplace, unless the plugin was already there before. |
 | Program files | Code in `~/.local/share/agent-resurrect/`, the commands `~/.local/bin/agent-resurrect` and `~/.local/bin/resurrect`, and a bytecode cache in `~/.cache/agent-resurrect/`. | Deletes them. |
 
@@ -385,7 +384,7 @@ The shell block looks like this:
 ```bash
 # >>> agent-resurrect >>>
 # Managed by agent-resurrect. Remove with: agent-resurrect uninstall
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac
 [ -f "$HOME/.local/share/agent-resurrect/shell/agent-resurrect.zsh" ] && . "$HOME/.local/share/agent-resurrect/shell/agent-resurrect.zsh"
 # <<< agent-resurrect <<<
 ```
@@ -501,7 +500,7 @@ If you are an AI agent acting for a user, or a script, these rules keep you safe
 - Run the command by its full path, `~/.local/bin/agent-resurrect`, until the user opens a new terminal tab. In a Claude Code session where the plugin is loaded, `agent-resurrect` is on your PATH too.
 - Add `--json` and branch on the exit code, not on the text.
 - Safe to run yourself: `ls`, `find`, `simulate`, `doctor`, `config` (reading), `version`, `adopt` (it records only the session you run under), and `install --dry-run` and `uninstall --dry-run`. Run `install --yes` or `uninstall --yes` only when the user asked for it.
-- Never use `agent-resurrect` with no arguments, `here` or `resume` to start a session for the user. Without a terminal they refuse: they print the resume command, change nothing, and exit with status 4. Add `--print` to get the command with status 0, then give it to the user to run.
+- Never use `agent-resurrect` with no arguments, `here` or `resume` to start a session for the user. With `--json` (which implies `--print`) or `--print` they only print the resume command and exit with status 0; give that command to the user to run. Without either, and without a terminal, they refuse: they print the command, change nothing, and exit with status 4.
 - Refer to sessions by session id, never by list number: `ls` numbers can change between two calls, and `find` does not number its candidates.
 - In `doctor --json`, run a check's `fix.argv` only when `fix.agent_may_run` is true, once, then run doctor again. Otherwise tell the user `fix.text`.
 - After installing, run `adopt` to record your own session, and tell the user that other sessions running now are recorded only after they restart.
@@ -515,12 +514,12 @@ If you are an AI agent acting for a user, or a script, these rules keep you safe
 | 1 | `error` | An unexpected error, an install or uninstall step failed, or `doctor` found a failure (or a warning, with `--strict`). |
 | 2 | `usage` | Bad arguments, an unknown config key or invalid value, or `find` text that is missing or too short. |
 | 3 | `not-found` | No session for that number or id, `find` found nothing, `here` has nothing recorded for this pane, or `adopt` is not running inside a Claude Code session in an iTerm2 pane. |
-| 4 | `needs-tty` | It would start an agent or ask a question, but stdin or stdout is not a terminal. The output contains the command to run. Use `--print` to get it with status 0, or `--yes` for `install` and `uninstall`. |
+| 4 | `needs-tty` | It would start an agent or ask a question, but stdin or stdout is not a terminal. The output contains the command to run. Use `--print` (or `--json`) to get it with status 0, or `--yes` for `install` and `uninstall`. |
 | 5 | `busy` | The session's agent process is still running. |
 | 6 | `gone` | The session's transcript no longer exists. |
 | 130 | `interrupted` | Ctrl-C. |
 
-After a successful launch, the exit status is Claude Code's own, because Claude Code replaces the `agent-resurrect` process. The `hook` command always exits 0 and prints nothing, whatever happens.
+After a successful launch, the exit status is Claude Code's own, because Claude Code replaces the `agent-resurrect` process. A `--json` command never launches anything. The `hook` command always exits 0 and prints nothing, whatever happens.
 
 ### JSON output
 

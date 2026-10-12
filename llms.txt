@@ -4,7 +4,7 @@
 
 Install with one command (`curl -fsSL https://github.com/imgovind/agent-resurrect/releases/latest/download/install.sh | bash`), from inside Claude Code (`/plugin marketplace add imgovind/agent-resurrect`, `/plugin install agent-resurrect@agent-resurrect`, then `/agent-resurrect:setup`), or have an agent install it with the prompt in docs/install-with-claude.md. It needs macOS, iTerm2, Claude Code and Python 3.9 or newer, uses no sudo, changes only iTerm2's preferences, the shell rc file and a LaunchAgent, and `agent-resurrect uninstall` reverts every change.
 
-Agents: run it as `~/.local/bin/agent-resurrect`, add `--json`, and branch on the exit code (0 ok, 1 error, 2 usage, 3 not found, 4 needs a terminal, 5 busy, 6 gone). Never use the bare command, `here` or `resume` to start a session: without a terminal they refuse with exit 4; use `--print` and give the command to the user. Refer to sessions by session id, not by list number. In `doctor --json`, run a fix's `argv` only when `agent_may_run` is true.
+Agents: run it as `~/.local/bin/agent-resurrect`, add `--json`, and branch on the exit code (0 ok, 1 error, 2 usage, 3 not found, 4 needs a terminal, 5 busy, 6 gone). Never use the bare command, `here` or `resume` to start a session: with `--json` (which implies `--print`) or `--print` they only print the resume command and exit 0, so give that command to the user; without either and without a terminal they refuse with exit 4. Refer to sessions by session id, not by list number. In `doctor --json`, run a fix's `argv` only when `agent_may_run` is true.
 
 ## Docs
 
@@ -19,6 +19,7 @@ Agents: run it as `~/.local/bin/agent-resurrect`, add `--json`, and branch on th
 - `agent-resurrect find --json "text you remember"`: the session containing that text, and its resume command (never launches)
 - `agent-resurrect simulate --assume-restart --json`: what each recorded pane would do after a restart, without launching or changing anything
 - `agent-resurrect adopt --json`: record the Claude Code session this command runs under
+- `agent-resurrect resume <session-id> --json`: the session and its resume command, printed, never launched
 - `agent-resurrect doctor --json`: every check, with a fix kind and whether an agent may run the fix
 - `agent-resurrect install --dry-run --json`: what the installer would change
 - `agent-resurrect uninstall --yes`: reverts everything the installer changed

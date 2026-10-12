@@ -11,7 +11,7 @@ The README and the code are the source of truth for behaviour. `docs/specs/` rec
 ## Layout
 
 - `install.sh`: thin bash bootstrap. Copies the tree to `~/.local/share/agent-resurrect`, writes the launcher `~/.local/bin/agent-resurrect`, then runs `agent-resurrect install --yes` and `doctor`. `--dry-run` stages to a temporary folder and runs `install --dry-run`.
-- `bin/agent-resurrect`: POSIX sh wrapper. Finds a Python 3.9+ and runs `libexec/agent-resurrect.py` with `-I`. It is on Claude Code's PATH while the plugin is enabled.
+- `bin/agent-resurrect`: POSIX sh wrapper. Finds a Python 3.9+ and runs `libexec/agent-resurrect.py` with `-I` (and `-B` for a `--dry-run`, which must write nothing under HOME). It is on Claude Code's PATH while the plugin is enabled.
 - `libexec/agent-resurrect.py`: the Python entry point. It finds `src/` relative to itself.
 - `src/agent_resurrect/cli.py`: argument parsing and output only. `views.py` builds the shared `Session` and `Pane` JSON objects.
 - `src/agent_resurrect/exitcodes.py` and `jsonout.py`: the exit code contract and the `--json` envelope.
@@ -42,7 +42,8 @@ Do not run `make install-dev` or `./install.sh` on the user's machine unless the
 - macOS only. Shell snippets must work in zsh and in macOS's bash 3.2.
 - Tests never touch the real HOME, user defaults, launchd or Claude Code, and never start a real `claude`. Use `tests.helpers.temp_home()` and put `tests/fakes` first on PATH, as `tests/test_install_sh.py` does.
 - Hooks always exit 0 and print nothing. Claude Code and Codex add SessionStart stdout to the model's context, so any output becomes prompt text.
-- Never launch an agent without a terminal on stdin and stdout. Print the command and return `exitcodes.NEEDS_TTY` instead.
+- Never launch an agent without a terminal on stdin and stdout. Print the command and return `exitcodes.NEEDS_TTY` instead. `--json` on `resume` and `here` implies `--print`: it never launches.
+- A dry run (`install --dry-run`, `uninstall --dry-run`, `install.sh --dry-run`) writes nothing under HOME: no log, no manifest, no bytecode.
 - Use the names in `exitcodes.py`, never bare integers. Build `--json` documents with `jsonout.document(command, code, message, **fields)` and print them with `jsonout.emit`. Exactly one object goes to stdout; diagnostics go to stderr. Within a schema version, only add fields. Keep `docs/json/` in step.
 - A pane is recorded and restored only when `TERM_PROGRAM` is `iTerm.app` and none of `TMUX`, `STY`, `ZELLIJ` is set, in Python and in both shell snippets.
 - Every system change is a `Setting`. Save the original value in the manifest before changing it, and make `revert` restore it exactly.
@@ -73,5 +74,5 @@ Do not run `make install-dev` or `./install.sh` on the user's machine unless the
 - Use `~/.local/bin/agent-resurrect` by full path, or `agent-resurrect` in a Claude Code session where the plugin is loaded.
 - Add `--json` and branch on the exit code: 0 ok, 1 error, 2 usage, 3 not found, 4 needs a terminal, 5 busy, 6 gone.
 - Safe to run: `ls`, `find`, `simulate`, `doctor`, `config` (reading), `version`, `adopt`, `install --dry-run`, `uninstall --dry-run`. Run `install --yes` or `uninstall --yes` only when the user asks.
-- Never run the bare command, `here` or `resume` to start a session: without a terminal they refuse with exit 4. Use `--print` and give the command to the user. Refer to sessions by id, not by list number.
+- Never run the bare command, `here` or `resume` to start a session. With `--json` (which implies `--print`) or `--print` they print the resume command and exit 0; give it to the user. Without either and without a terminal they refuse with exit 4. Refer to sessions by id, not by list number.
 - In `doctor --json`, run `fix.argv` only when `fix.agent_may_run` is true.
