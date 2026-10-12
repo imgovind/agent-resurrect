@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/envelope.schema.json",
+  "title": "agent-resurrect --json envelope",
+  "description": "Fields every agent-resurrect --json document carries. stdout holds exactly one such object, newline-terminated and ASCII-only. Within a /1 schema fields are only ever added, never renamed or removed. On success every field of the command's schema is present; on failure the envelope is always present and the other fields are present when known (an argument error carries the envelope only).",
+  "type": "object",
+  "required": ["schema", "version", "ok", "error"],
+  "properties": {
+    "schema": {"type": "string", "pattern": "^agent-resurrect\\.[a-z]+/1$"},
+    "version": {"type": "string"},
+    "ok": {"type": "boolean", "description": "true exactly when the exit status is 0"},
+    "error": {
+      "type": ["object", "null"],
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "description": "The name of the exit status: 1 error, 2 usage, 3 not-found, 4 needs-tty, 5 busy, 6 gone, 130 interrupted",
+          "enum": ["error", "usage", "not-found", "needs-tty", "busy", "gone", "interrupted"]
+        },
+        "message": {"type": "string"}
+      }
+    }
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"properties": {"error": {"type": "null"}}},
+  "else": {"properties": {"error": {"type": "object"}}},
+  "$defs": {
+    "timestamp": {
+      "description": "ISO 8601 UTC, whole seconds, e.g. 2026-10-12T10:54:16Z; null when unknown",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "path": {
+      "description": "An absolute path; null when unknown",
+      "type": ["string", "null"],
+      "pattern": "^/"
+    },
+    "restore_reason": {
+      "description": "Why automatic restore would or would not resume a record (the restore module's constants)",
+      "enum": ["ok", "not-live", "too-old", "agent-running", "session-gone", "unknown-agent"]
+    }
+  }
+}

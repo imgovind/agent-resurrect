@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/pane.schema.json",
+  "title": "Pane",
+  "description": "A terminal pane a session is recorded for. key is stable across restarts; label is for display only.",
+  "type": "object",
+  "required": ["terminal", "key", "label"],
+  "properties": {
+    "terminal": {"type": ["string", "null"], "description": "e.g. iterm; null when unknown"},
+    "key": {"type": "string", "description": "e.g. iterm-AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"},
+    "label": {"type": ["string", "null"], "description": "e.g. w0t1p0"}
+  }
+}

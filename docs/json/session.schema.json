@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/session.schema.json",
+  "title": "Session",
+  "description": "One agent session and how to resume it. Text from transcripts (title, first_prompt) is returned raw. Every string may be null except session_id, agent and resume.argv.",
+  "type": "object",
+  "required": ["session_id", "agent", "title", "first_prompt", "cwd", "cwd_exists", "transcript_path",
+               "started_at", "last_active_at", "permission_mode", "resume"],
+  "properties": {
+    "session_id": {"type": "string"},
+    "agent": {"type": "string", "description": "adapter name, e.g. claude"},
+    "title": {"type": ["string", "null"]},
+    "first_prompt": {"type": ["string", "null"]},
+    "cwd": {"$ref": "envelope.schema.json#/$defs/path", "description": "the recorded working directory"},
+    "cwd_exists": {"type": "boolean"},
+    "transcript_path": {"$ref": "envelope.schema.json#/$defs/path"},
+    "started_at": {"$ref": "envelope.schema.json#/$defs/timestamp"},
+    "last_active_at": {"$ref": "envelope.schema.json#/$defs/timestamp"},
+    "permission_mode": {"type": ["string", "null"], "description": "as recorded, e.g. bypassPermissions"},
+    "resume": {
+      "type": ["object", "null"],
+      "description": "How to resume the session; null only when no installed adapter knows the agent",
+      "required": ["argv", "cwd", "env", "command", "skips_permissions", "warning"],
+      "properties": {
+        "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "cwd": {"$ref": "envelope.schema.json#/$defs/path",
+                "description": "start the agent here; null when the recorded folder is gone (warning says so)"},
+        "env": {"type": "object", "additionalProperties": {"type": "string"},
+                "description": "environment variables the agent needs, e.g. CLAUDE_CONFIG_DIR"},
+        "command": {"type": ["string", "null"], "description": "copy-paste ready shell command (cd, env and argv)"},
+        "skips_permissions": {"type": "boolean", "description": "the command turns the agent's permission checks off"},
+        "warning": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

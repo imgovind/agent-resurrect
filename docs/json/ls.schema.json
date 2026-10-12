@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/ls.schema.json",
+  "title": "agent-resurrect ls --json",
+  "description": "Recorded sessions, newest first. number is what resume <n> accepts (null for running entries); prefer resuming by session id, numbers can change when any hook fires.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.ls/1"},
+    "include_running": {"type": "boolean"},
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/entry"}}
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["include_running", "entries"]},
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": ["number", "status", "running", "auto_restore", "pane", "agent_pid", "recorded_at", "updated_at", "session"],
+      "properties": {
+        "number": {"type": ["integer", "null"], "minimum": 1},
+        "status": {"enum": ["live", "consumed", "skipped"]},
+        "running": {"type": "boolean", "description": "the session's agent process is still running"},
+        "auto_restore": {
+          "type": "object",
+          "required": ["eligible", "reason"],
+          "properties": {
+            "eligible": {"type": "boolean"},
+            "reason": {"$ref": "envelope.schema.json#/$defs/restore_reason"}
+          }
+        },
+        "pane": {"anyOf": [{"$ref": "pane.schema.json"}, {"type": "null"}]},
+        "agent_pid": {"type": ["integer", "null"]},
+        "recorded_at": {"$ref": "envelope.schema.json#/$defs/timestamp"},
+        "updated_at": {"$ref": "envelope.schema.json#/$defs/timestamp"},
+        "session": {"$ref": "session.schema.json"}
+      }
+    }
+  }
+}

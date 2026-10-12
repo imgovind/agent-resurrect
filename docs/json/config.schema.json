@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/imgovind/agent-resurrect/main/docs/json/config.schema.json",
+  "title": "agent-resurrect config --json",
+  "description": "Show or change configuration. With no key: values only. With a key: key and value. With a key and a value: the value is validated and saved (written is true). Exit 2 for an unknown key or an invalid value.",
+  "allOf": [{"$ref": "envelope.schema.json"}],
+  "properties": {
+    "schema": {"const": "agent-resurrect.config/1"},
+    "path": {"$ref": "envelope.schema.json#/$defs/path"},
+    "values": {
+      "type": "object",
+      "required": ["auto_resume", "countdown_seconds", "permission_flag", "max_age_days"],
+      "properties": {
+        "auto_resume": {"enum": ["countdown", "immediate", "ask", "off"]},
+        "countdown_seconds": {"type": "integer", "minimum": 0},
+        "permission_flag": {"enum": ["mirror", "always", "never"]},
+        "max_age_days": {"type": "integer", "minimum": 0}
+      }
+    },
+    "choices": {
+      "description": "the allowed values of each enumerated key",
+      "type": "object",
+      "additionalProperties": {"type": "array", "items": {"type": "string"}}
+    },
+    "key": {"type": ["string", "null"]},
+    "value": {"type": ["string", "integer", "null"]},
+    "written": {"type": "boolean"}
+  },
+  "if": {"properties": {"ok": {"const": true}}},
+  "then": {"required": ["path", "values", "choices", "key", "value", "written"]}
+}
