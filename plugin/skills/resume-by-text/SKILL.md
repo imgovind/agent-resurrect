@@ -23,16 +23,18 @@ PASTED_TEXT_END
 
    If the shell says `agent-resurrect: command not found`, run the same command with `"$HOME/.local/bin/agent-resurrect"` in its place.
 
-3. Reply with the best match's title, opening prompt, last-active date, and the resume command from the output (`cd ... && claude --resume ...`) in a code block, ready to copy. The `cd` matters: sessions are looked up per directory.
-4. If the output calls the match weak or ambiguous, or another candidate matches as many probes as the best one, show the candidate list and ask which one in prose. Do not guess.
+3. Reply with the best match's `title`, `opens` (its opening prompt) and `active` (first and last activity) lines, and the command printed under `Resume command:`, copied exactly, in a code block, ready to copy. When the session's directory still exists the command starts with `cd '<dir>' &&`, so it resumes where the session ran.
+4. If a `NOTE` line calls the match weak or ambiguous, show the `Other candidates:` list and ask which one in prose. Do not guess.
 
 ## Reading the output
 
 | Output | Meaning |
 |---|---|
-| Text appears in `Claude x2, you x1` | Where the text appears. Only `tool output` or `injected context` means that session merely handled the text (for example, grepped for it), not that it is the conversation. |
-| Fewer probes found than searched | Normal for text copied from the terminal: rendering strips markdown, so some probes miss. Still trust the match unless it is flagged as weak or ambiguous. |
-| A warning that the directory no longer exists | Removed worktree. Say so; the `cd` will fail. |
-| `No session contains that text.` or the text is too short | Ask for a different snippet: plain prose from a single line, not a table or code block. |
+| `text appears in: Claude x2, you x1` on the `BEST MATCH` line, `[tool output x1]` on a candidate | Where the text appears. Only `tool output` or `injected context` means that session merely handled the text (for example, grepped for it), not that it is the conversation. |
+| `(3/4 probes; ...)`: fewer probes found than searched | Normal for text copied from the terminal: rendering strips markdown, so some probes miss. Still trust the match unless a `NOTE` flags it. |
+| `NOTE    : weak match, only 1 probe found` or `NOTE    : ambiguous, another session matches equally well` | Not safe to pick on your own: show the candidates and ask. |
+| `WARNING : working directory <dir> no longer exists; resuming from the current directory` | Removed worktree or folder. Say so. The command has no `cd`; `claude --resume` still finds the session, but it runs in the current directory. |
+| `WARNING : the recorded cwd does not match the transcript's project folder` | The directory may have been moved or renamed. If resume says no conversation was found, run it from the folder's original directory. |
+| `No session contains that text.` or `Pasted text is too short to identify a session` | Ask for a different snippet: plain prose from a single line or two, not a table or code block. |
 
 The current session contains the pasted text too, so it is excluded automatically. Scope: top-level session transcripts only. Subagent logs are not searched.

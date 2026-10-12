@@ -48,7 +48,7 @@ bash install.sh
 Paste this prompt into Claude Code. It reads the installer, tells you what will change, installs, and checks the result.
 
 ```text
-Install agent-resurrect from https://github.com/imgovind/agent-resurrect on this Mac. First download install.sh from that repo, read it, and tell me in a few bullets what it will change. Then run `curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash`. After it finishes, run `agent-resurrect doctor`; for anything not marked OK, run the fix it suggests and run doctor again. Do not use sudo. Finish by telling me what changed and the uninstall command.
+Install agent-resurrect from https://github.com/imgovind/agent-resurrect on this Mac. First download install.sh from that repo, read it, and tell me in a few bullets what it will change. Then run `curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash`. After it finishes, run `~/.local/bin/agent-resurrect doctor`; for anything not marked OK, run the fix it suggests and run doctor again. Do not use sudo. Finish by telling me what changed and the uninstall command.
 ```
 
 More about this route: [docs/install-with-claude.md](docs/install-with-claude.md).

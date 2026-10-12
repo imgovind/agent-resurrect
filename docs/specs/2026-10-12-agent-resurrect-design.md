@@ -230,7 +230,7 @@ The manual commands skip rule 1.
 1. **One line:** `curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash`
 2. **Paste into Claude Code** (README section "Install with Claude Code"), copy-paste ready:
 
-   > Install agent-resurrect from https://github.com/imgovind/agent-resurrect on this Mac. First download install.sh from that repo, read it, and tell me in a few bullets what it will change. Then run `curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash`. After it finishes, run `agent-resurrect doctor`; for anything not marked OK, run the fix it suggests and run doctor again. Do not use sudo. Finish by telling me what changed and the uninstall command.
+   > Install agent-resurrect from https://github.com/imgovind/agent-resurrect on this Mac. First download install.sh from that repo, read it, and tell me in a few bullets what it will change. Then run `curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash`. After it finishes, run `~/.local/bin/agent-resurrect doctor`; for anything not marked OK, run the fix it suggests and run doctor again. Do not use sudo. Finish by telling me what changed and the uninstall command.
 
 3. **From a clone:** `./install.sh` copies from the working tree instead of downloading. This is also the development path.
 
