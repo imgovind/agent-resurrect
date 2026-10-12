@@ -33,20 +33,6 @@ def _print_mode(args: str) -> bool:
     return any(t in ("-p", "--print") or t.startswith("--print=") for t in args.split())
 
 
-def _mode_from_args(args: str) -> Optional[str]:
-    """The permission mode the agent was started with. SessionStart payloads (Claude Code 2.1.296) carry
-    no permission_mode, so this is the fallback that keeps a bypass session resumable as one."""
-    tokens = args.split()
-    if "--dangerously-skip-permissions" in tokens:
-        return "bypassPermissions"
-    for i, token in enumerate(tokens):
-        if token.startswith("--permission-mode="):
-            return token.split("=", 1)[1] or None
-        if token == "--permission-mode" and i + 1 < len(tokens):
-            return tokens[i + 1]
-    return None
-
-
 def _skip_reason(agent: ProcInfo) -> Optional[str]:
     """Why this claude process is not an interactive session worth resuming, or None if it is."""
     if not agent.has_tty:
@@ -110,8 +96,7 @@ class ClaudeAdapter(AgentAdapter):
         record = Record(terminal=ctx.terminal.name, pane_key=ctx.pane_key, pane_label=ctx.pane_label,
                         agent=NAME, session_id=session_id, cwd=_text(payload, "cwd") or "",
                         transcript_path=_text(payload, "transcript_path"),
-                        permission_mode=_text(payload, "permission_mode") or _mode_from_args(agent.args),
-                        source=_text(payload, "source"),
+                        permission_mode=_text(payload, "permission_mode"), source=_text(payload, "source"),
                         agent_pid=agent.pid, agent_started=agent.started, status=STATUS_LIVE)
         existing = store.load(ctx.pane_key)
         if existing is not None and existing.session_id == session_id:

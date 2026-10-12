@@ -69,26 +69,6 @@ class ClaudeHookTest(HookTestCase):
                          ("/x/s1.jsonl", "bypassPermissions", "startup"))
         self.assertTrue(record.recorded_at and record.updated_at)
 
-    def test_permission_mode_falls_back_to_the_command_line(self):
-        # Claude Code 2.1.296 sends no permission_mode in SessionStart (seen in a live run), so the
-        # agent's own flags are the next source; without this a bypass session that dies before its
-        # first message would be resumed without --dangerously-skip-permissions.
-        payload_without_mode = {k: v for k, v in START.items() if k != "permission_mode"}
-        cases = [("claude --dangerously-skip-permissions", "bypassPermissions"),
-                 ("claude --permission-mode plan", "plan"),
-                 ("claude --permission-mode=acceptEdits", "acceptEdits"),
-                 ("claude --permission-mode", None),
-                 ("claude", None)]
-        for args, expected in cases:
-            with self.subTest(args=args):
-                store.delete("fake-p1")
-                self.agent.on_hook("SessionStart", dict(payload_without_mode), ctx(tree(agent_args=args)))
-                self.assertEqual(store.load("fake-p1").permission_mode, expected)
-
-    def test_payload_permission_mode_wins_over_the_command_line(self):
-        self.start(procs=tree(agent_args="claude --permission-mode plan"))
-        self.assertEqual(store.load("fake-p1").permission_mode, "bypassPermissions")
-
     def test_nested_claude_is_not_recorded(self):
         self.start(procs=tree(proc(50, 40, "claude", stat="S+", tty="ttys029"), proc(40, 1, "-zsh")))
         self.assertIsNone(store.load("fake-p1"))
