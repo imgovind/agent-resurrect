@@ -122,9 +122,9 @@
 {
   "hooks": {
     "SessionStart": [{ "hooks": [{ "type": "command", "timeout": 10,
-      "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionStart </dev/stdin >/dev/null 2>&1 || true" }] }],
+      "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionStart >/dev/null 2>&1 || true" }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "timeout": 5,
-      "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionEnd </dev/stdin >/dev/null 2>&1 || true" }] }]
+      "command": "[ -x \"$HOME/.local/bin/agent-resurrect\" ] && \"$HOME/.local/bin/agent-resurrect\" hook claude SessionEnd >/dev/null 2>&1 || true" }] }]
   }
 }
 ```
@@ -218,7 +218,7 @@ Keep the "print the command, never run it" rule and the output-reading table. Re
   def launch(plan: ResumePlan) -> None             # os.chdir(cwd) if cwd; os.execvp(argv[0], argv). Raises OSError if not found.
   def wait_for_key(seconds: int, stdin=None, stdout=None) -> bool   # countdown; True if a key was pressed
   def ask_yes_no(prompt: str, stdin=None, stdout=None) -> bool      # default yes
-  def resume_record(record, agent, config, *, stdout=None, launcher=launch) -> int
+  def resume_record(record, agent, config, *, stdout=None, launcher=launch, announce=True) -> int
   def auto(env, *, terminal=None, agent_lookup=None, procs=None, config=None, stdin=None, stdout=None,
            keypress=wait_for_key, ask=ask_yes_no, launcher=launch, isatty=None, now=None) -> int
   ```
@@ -234,7 +234,7 @@ Keep the "print the command, never run it" rule and the output-reading table. Re
   5. Otherwise `ok`.
 - `plan_resume`: the argv comes from `agent.resume_argv`. If `record.cwd` is an existing directory, cwd is set to it; otherwise cwd is None and the warning is `"working directory <cwd> no longer exists; resuming from the current directory"`.
 - `resume_record`:
-  1. Print `Resurrecting "<title or first prompt or session id>" (<agent>) in <cwd>`.
+  1. If `announce`, print `Resurrecting "<title or first prompt or session id>" (<agent>) in <cwd>`.
   2. If the record has a valid pane key and is stored, call `store.set_status(key, "consumed")`.
   3. Call `store.append_restore_event(key, "resumed", session_id)`.
   4. Print the warning, if any.
@@ -250,7 +250,7 @@ Keep the "print the command, never run it" rule and the output-reading table. Re
      - `ask`: if `ask(...)` is False, set status `skipped`, append event `skipped`, print the hint, return 0.
      - `countdown`: print `Resurrecting "<title>" (<agent>) in <cwd>. Press any key to skip.` If `keypress(config.countdown_seconds)` is True, set status `skipped`, append event `skipped`, print `Skipped. Run "agent-resurrect" in this pane to resume it later.`, and return 0.
      - `immediate`: continue without waiting.
-  7. Finally `return resume_record(...)`.
+  7. Finally `return resume_record(..., announce=(config.auto_resume == "immediate"))`. Countdown and ask have already announced the session, so they must not print it twice.
 - `wait_for_key`:
   - Put the terminal in cbreak mode with `tty.setcbreak`, and always restore it in a `finally`.
   - Each second, rewrite the countdown with `\r` (`in 3s`, `in 2s`, ...).
