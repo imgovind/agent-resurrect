@@ -4,7 +4,7 @@
 
 **Goal:** Fix every confirmed robustness bug from the 0.1.0 review, make the tool fully usable by AI agents (`--json`, exit codes, no launching without a terminal, `simulate`, `adopt`), make the Claude Code plugin a complete install path, and bring docs and repo hygiene to a high standard.
 
-**Sources (read the parts named in your task):** review reports outside the repo, in `/Users/govind/Developer/imgovind/agent-resurrect-review/`:
+**Sources (read the parts named in your task):** review reports kept outside the repository (not published):
 - `01-code-robustness.md`: C1, H1-H3, M1-M8, Low.
 - `02-developer-experience.md`: README, docs/code mismatches, OSS files, release workflow.
 - `03-agent-usability.md`: P0/P1/P2, the setup skill, and the machine interface spec. The "Machine interface spec (proposed)" section is **normative** for this release.

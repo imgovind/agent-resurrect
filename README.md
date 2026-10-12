@@ -8,7 +8,7 @@ Resume your Claude Code sessions in the same iTerm2 panes after your Mac restart
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![iTerm2 panes resuming their own Claude Code sessions in a fresh shell](docs/demo.gif)
+<!-- Demo recording coming soon: ![iTerm2 panes resuming their own Claude Code sessions in a fresh shell](docs/demo.gif) -->
 
 ```text
 Resurrecting "Fix the login redirect" (claude) in /Users/me/project. Press any key to skip.
