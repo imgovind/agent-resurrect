@@ -203,8 +203,6 @@ class InstallShTest(unittest.TestCase):
         self.assertIn("could not download", failed.stderr)
         self.assertTrue((self.home / ".local/share/agent-resurrect/src").exists())  # the old install is untouched
 
-    @unittest.skipUnless((REPO / "bin" / "agent-resurrect.py").exists(),
-                         "bin/agent-resurrect.py comes from Task E; the integrator un-skips this")
     def test_install_sh_from_clone(self):
         result = self.run_sh()
         self.assert_ok(result)

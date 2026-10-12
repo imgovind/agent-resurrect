@@ -12,11 +12,11 @@ import unittest
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from unittest import mock
 
 import agent_resurrect
-from agent_resurrect import paths, store
+from agent_resurrect import cli, paths, restore, store
 from agent_resurrect.model import ISO_FORMAT, Candidate, Record, SessionInfo
 from agent_resurrect.settings.base import Check, Setting
 from tests.helpers import FakeAgent, FakeProcs, FakeTerminal, make_record, proc, temp_home
@@ -24,103 +24,6 @@ from tests.helpers import FakeAgent, FakeProcs, FakeTerminal, make_record, proc,
 PACKAGE_DIR = Path(agent_resurrect.__file__).resolve().parent
 REPO = PACKAGE_DIR.parent.parent
 BIN = REPO / "bin" / "agent-resurrect.py"
-# restore.py (Task B) and installer.py (Task C) are written in parallel with the CLI. Until they are
-# merged, minimal stand-ins that follow the plan's interfaces take their place, so these same tests run
-# unchanged against the real modules after integration.
-REAL_SIBLINGS = all((PACKAGE_DIR / f"{name}.py").exists() for name in ("restore", "installer"))
-
-
-def _build_restore(module):
-    from agent_resurrect.model import parse_iso
-
-    @dataclass
-    class Decision:
-        eligible: bool
-        reason: str
-
-    @dataclass
-    class ResumePlan:
-        argv: List[str]
-        cwd: Optional[str]
-        warning: Optional[str]
-
-    def check_eligible(record, agent, procs, config, now=None, require_live=True):
-        if require_live and record.status != "live":
-            return Decision(False, "not-live")
-        updated = parse_iso(record.updated_at)
-        now = now or datetime.now(timezone.utc)
-        if updated is not None and updated < now - timedelta(days=config.max_age_days):
-            return Decision(False, "too-old")
-        if procs.is_alive(record.agent_pid, record.agent_started):
-            return Decision(False, "agent-running")
-        if not agent.session_exists(record):
-            return Decision(False, "session-gone")
-        return Decision(True, "ok")
-
-    def plan_resume(record, agent, config):
-        argv = agent.resume_argv(record, config)
-        if record.cwd and os.path.isdir(record.cwd):
-            return ResumePlan(argv, record.cwd, None)
-        return ResumePlan(argv, None, f"working directory {record.cwd} no longer exists; "
-                                      "resuming from the current directory")
-
-    def format_command(plan):
-        command = " ".join(shlex.quote(part) for part in plan.argv)
-        return f"cd {shlex.quote(plan.cwd)} && {command}" if plan.cwd else command
-
-    def launch(plan):
-        raise AssertionError("tests must replace restore.launch")
-
-    def resume_record(record, agent, config, *, stdout=None, launcher=launch, announce=True):
-        out = stdout or sys.stdout
-        plan = plan_resume(record, agent, config)
-        if announce:
-            print(f'Resurrecting "{record.session_id}" ({record.agent}) in {record.cwd}', file=out)
-        if store.valid_pane_key(record.pane_key) and store.load(record.pane_key) is not None:
-            store.set_status(record.pane_key, "consumed")
-        store.append_restore_event(record.pane_key, "resumed", record.session_id)
-        if plan.warning:
-            print(plan.warning, file=out)
-        try:
-            launcher(plan)
-        except OSError as exc:
-            print(f"agent-resurrect: could not start {plan.argv[0]}: {exc}", file=out)
-            return 1
-        return 0
-
-    def auto(env, **kwargs):
-        raise AssertionError("tests must replace restore.auto")
-
-    module.__dict__.update(Decision=Decision, ResumePlan=ResumePlan, check_eligible=check_eligible,
-                           plan_resume=plan_resume, format_command=format_command, launch=launch,
-                           resume_record=resume_record, auto=auto)
-
-
-def _build_installer(module):
-    @dataclass
-    class StepResult:
-        id: str
-        status: str
-        detail: str = ""
-
-    def install(settings=None):
-        raise AssertionError("tests must replace cli.installer")
-
-    def uninstall(settings=None, purge=False):
-        raise AssertionError("tests must replace cli.installer")
-
-    module.__dict__.update(StepResult=StepResult, install=install, uninstall=uninstall)
-
-
-for _name, _build in (("restore", _build_restore), ("installer", _build_installer)):
-    _full = f"agent_resurrect.{_name}"
-    if not (PACKAGE_DIR / f"{_name}.py").exists() and _full not in sys.modules:
-        _module = types.ModuleType(_full)
-        _build(_module)
-        sys.modules[_full] = _module
-        setattr(agent_resurrect, _name, _module)
-
-from agent_resurrect import cli, restore  # noqa: E402  (after the stand-ins, if any)
 
 
 @dataclass
@@ -673,13 +576,11 @@ class CliEntryPointTest(unittest.TestCase):
             return subprocess.run([sys.executable, "-I", str(BIN), *argv], input=stdin, env=env,
                                   capture_output=True, timeout=30)
 
-    @unittest.skipUnless(REAL_SIBLINGS, "needs restore.py and installer.py (merged at integration)")
     def test_entry_point_runs_isolated(self):
         result = self.run_bin("--version")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.decode().strip(), "agent-resurrect 0.1.0")
 
-    @unittest.skipUnless(REAL_SIBLINGS, "needs restore.py and installer.py (merged at integration)")
     def test_entry_point_hook_is_silent(self):
         result = self.run_bin("hook", "claude", "SessionStart", stdin=b"{garbage")
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"", b""))
