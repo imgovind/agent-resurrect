@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement to a command, the installer or the docs.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The change you have in mind, if you have one. Commands or output you would expect help most.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Automatic restore after a restart
+        - Commands (ls, resume, find, simulate, adopt, config, doctor)
+        - JSON output or exit codes
+        - Installer, upgrade or uninstall
+        - Claude Code plugin or skills
+        - Docs
+        - Other
+    validations:
+      required: true

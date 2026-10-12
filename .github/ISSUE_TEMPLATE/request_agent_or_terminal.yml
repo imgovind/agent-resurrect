@@ -1,0 +1,41 @@
+name: Request an agent or terminal
+description: Ask for support for another coding agent or terminal.
+title: "Support for "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agent-resurrect supports Claude Code in iTerm2 today. Agents and terminals sit behind adapter interfaces, and requests here decide what comes next.
+        Please search the open requests first and add a thumbs-up to an existing one instead of opening a duplicate.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What should it support
+      options:
+        - An agent (Codex, Cursor agent, opencode, Qoder, Gemini CLI, other)
+        - A terminal (Ghostty, Warp, WezTerm, Kitty, Terminal.app, other)
+        - A multiplexer inside a terminal (tmux, screen, zellij)
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Which one
+      placeholder: Codex CLI
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: How you use it
+      description: How many sessions or panes you usually have open, and what you do after a restart today.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What you know about it
+      description: |
+        For an agent: where it stores sessions, the command that resumes one, and whether it has session start and end hooks.
+        For a terminal or multiplexer: the environment variable that identifies a pane, and whether it survives a restart.
