@@ -153,7 +153,7 @@ def _check_since_boot(report: _Report, records: List[Record], running: Dict[str,
             orphans.append(record)
     if orphans:
         died = _plural(len(orphans), "session died in a pane", "sessions died in panes")
-        report.warn(f"{died} that did not come back; run: agent-resurrect ls")
+        report.warn(f"{died} that did not come back; run: ~/.local/bin/agent-resurrect ls")
 
 
 def run(out: Optional[TextIO] = None, *, procs: Optional[Procs] = None, boot_time: Optional[float] = None) -> int:

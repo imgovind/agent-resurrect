@@ -80,7 +80,7 @@ class ShellRcBlock(Setting):
     """The block in ~/.zshrc (honouring ZDOTDIR), or in ~/.bash_profile, else ~/.bashrc, for bash.
     The original stored for revert() is {"existed": bool, "path": str, "added_newline": bool}."""
 
-    fix_hint = "run: agent-resurrect install"
+    fix_hint = "run: ~/.local/bin/agent-resurrect install"
 
     def __init__(self, shell: str):
         if shell not in SHELLS:

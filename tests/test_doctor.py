@@ -136,7 +136,7 @@ class DoctorTest(unittest.TestCase):
         code, out = self.run_doctor(procs=FakeProcs(proc(777, 1, "fake-agent")), boot_time=time.time() - 3600)
         self.assertEqual(code, 0)
         self.assertIn("OK    4 recorded sessions (3 live, 2 restorable)", out)
-        self.assertIn("WARN  1 session died in a pane that did not come back; run: agent-resurrect ls", out)
+        self.assertIn("WARN  1 session died in a pane that did not come back; run: ~/.local/bin/agent-resurrect ls", out)
 
     def test_no_orphans_no_warning(self):
         put(make_record(), 10)

@@ -33,7 +33,7 @@ class ITermRestorePolicy(BoolDefaultsSetting):
 
     id = "iterm.restore_policy"
     description = 'iTerm2 restores its windows at launch (Startup: "Use System Window Restoration Setting")'
-    fix_hint = ('run: agent-resurrect install, or set iTerm2 Settings > General > Startup to '
+    fix_hint = ('run: ~/.local/bin/agent-resurrect install, or set iTerm2 Settings > General > Startup to '
                 '"Use System Window Restoration Setting"')
     ok_detail = "iTerm2 restores its windows at launch"
     keys = [BoolKey(ITERM_DOMAIN, "OpenArrangementAtStartup", want=False, default=False),
@@ -77,8 +77,8 @@ class ITermLaunchAtLogin(Setting):
     @property
     def fix_hint(self) -> str:
         if not iterm_app().exists():
-            return "install iTerm2 from https://iterm2.com, then run: agent-resurrect install"
-        return "run: agent-resurrect install"
+            return "install iTerm2 from https://iterm2.com, then run: ~/.local/bin/agent-resurrect install"
+        return "run: ~/.local/bin/agent-resurrect install"
 
     def check(self) -> Check:
         if not iterm_app().exists():

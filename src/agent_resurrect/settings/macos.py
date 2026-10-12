@@ -14,7 +14,7 @@ class KeepWindowsOnQuit(BoolDefaultsSetting):
 
     id = "macos.keep_windows"
     description = 'Keep app windows when quitting (turns off macOS "Close windows when quitting an application")'
-    fix_hint = ('run: agent-resurrect install, or turn off "Close windows when quitting an application" '
+    fix_hint = ('run: ~/.local/bin/agent-resurrect install, or turn off "Close windows when quitting an application" '
                 "in System Settings > Desktop & Dock")
     ok_detail = "macOS keeps windows when quitting an application"
     keys = [BoolKey(GLOBAL_DOMAIN, "NSQuitAlwaysKeepsWindows", want=True, default=False)]

@@ -46,8 +46,8 @@ class ClaudePlugin(Setting):
     @property
     def fix_hint(self) -> str:
         if not shutil.which("claude"):
-            return "install Claude Code, then run: agent-resurrect install"
-        return "run: agent-resurrect install"
+            return "install Claude Code, then run: ~/.local/bin/agent-resurrect install"
+        return "run: ~/.local/bin/agent-resurrect install"
 
     def _claude(self, *args: str) -> subprocess.CompletedProcess:
         executable = shutil.which("claude")

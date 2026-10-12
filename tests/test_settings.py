@@ -476,7 +476,7 @@ class ClaudePluginSettingTest(unittest.TestCase):
             self.assertIsNone(setting.apply())
             check = setting.check()
             self.assertFalse(check.ok)
-            self.assertIn("install Claude Code, then run: agent-resurrect install", setting.fix_hint)
+            self.assertIn("install Claude Code, then run: ~/.local/bin/agent-resurrect install", setting.fix_hint)
             self.assertEqual(fs.calls("claude"), [])
 
 
