@@ -28,10 +28,16 @@ DESCRIBE_TOP = 8  # best raw matches that are read in full before the final rank
 ECHO_TYPES = {"last-prompt", "queue-operation"}
 FIRST_PROMPT_CHARS = 100
 PERMISSION_TAIL_BYTES = 256 * 1024
+# session_info reads only these two ends of a transcript (which reach hundreds of MB). Measured on real
+# transcripts of 55-73 MB: the first user record sits within ~22 KB of the start, and Claude Code rewrites
+# its ai-title record hundreds of times per session, the last one within ~10 KB of the end.
+HEAD_BYTES = 64 * 1024
+TAIL_BYTES = PERMISSION_TAIL_BYTES
 PARALLEL_MIN_FILES = 256  # below this, starting worker processes costs more than it saves
 SCAN_CHUNK = 32
-# Session ids are UUIDs; anything else could be a path or a glob, so it is never looked up.
-SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+# Session ids are UUIDs; anything else could be a path, a glob or (with a leading dash) a command-line flag,
+# so it is never looked up or recorded. Matched with fullmatch: "$" would also accept a trailing newline.
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _MODE_KEY = b'"permissionMode"'
 
 
@@ -41,6 +47,10 @@ class TranscriptMeta:
     cwd_trusted: bool           # True if cwd dash-encodes to the transcript's project folder name
     info: SessionInfo
     permission_mode: Optional[str]  # the last permission mode recorded anywhere in the transcript
+
+
+def valid_session_id(session_id) -> bool:
+    return isinstance(session_id, str) and SESSION_ID.fullmatch(session_id) is not None
 
 
 def build_probes(text: str, max_probes: int = MAX_PROBES) -> List[str]:
@@ -185,9 +195,7 @@ def _read_transcript(path: Path, probes: Sequence[bytes] = ()) -> Tuple[Transcri
             if record is None:
                 continue
             kind = record.get("type")
-            title = record.get("aiTitle")
-            if kind == "ai-title" and isinstance(title, str) and title.strip():
-                info.title = title
+            info.title = _title_of(record) or info.title
             mode = _mode_of(record) or mode
             if need_meta:
                 timestamp, cwd = record.get("timestamp"), record.get("cwd")
@@ -195,8 +203,7 @@ def _read_transcript(path: Path, probes: Sequence[bytes] = ()) -> Tuple[Transcri
                     info.started = timestamp
                 if isinstance(cwd, str) and cwd and cwd not in cwds:
                     cwds.append(cwd)
-                if info.first_prompt is None and kind == "user" and role_of(record) == "you":
-                    info.first_prompt = " ".join(user_text(record).split())[:FIRST_PROMPT_CHARS] or None
+                info.first_prompt = info.first_prompt or _first_prompt(record)
                 need_meta = not (info.started and cwds and info.first_prompt)
             if hit and kind not in ECHO_TYPES:
                 roles[role_of(record)] += 1
@@ -212,6 +219,52 @@ def transcript_meta(path: Path) -> TranscriptMeta:
     """Title, opening prompt, timestamps, working directory and last permission mode of one transcript.
     Raises OSError if the file cannot be read."""
     return _read_transcript(Path(path))[0]
+
+
+def _title_of(record: Optional[dict]) -> Optional[str]:
+    title = record.get("aiTitle") if record and record.get("type") == "ai-title" else None
+    return title if isinstance(title, str) and title.strip() else None
+
+
+def _first_prompt(record: dict) -> Optional[str]:
+    if record.get("type") != "user" or role_of(record) != "you":
+        return None
+    return " ".join(user_text(record).split())[:FIRST_PROMPT_CHARS] or None
+
+
+def session_info(path: Path) -> SessionInfo:
+    """Title, opening prompt and timestamps of one transcript, for listings and the restore prompt.
+    Reads the first HEAD_BYTES (start time, first prompt) and the last TAIL_BYTES (latest title, else the
+    head's), never the whole file. Raises OSError if the file cannot be read."""
+    with open(path, "rb") as fh:
+        stat = os.fstat(fh.fileno())
+        head = fh.read(HEAD_BYTES)
+        tail = head
+        if stat.st_size > HEAD_BYTES:
+            fh.seek(max(0, stat.st_size - TAIL_BYTES))
+            tail = fh.read(TAIL_BYTES)
+    info = SessionInfo(last_active=stat.st_mtime)
+    # Lines cut in half at either boundary cannot parse as JSON objects, so they are skipped like bad lines.
+    for raw in head.split(b"\n"):
+        record = _parse(raw)
+        if record is None:
+            continue
+        timestamp = record.get("timestamp")
+        if not info.started and isinstance(timestamp, str):
+            info.started = timestamp
+        info.first_prompt = info.first_prompt or _first_prompt(record)
+        if info.started and info.first_prompt:
+            break
+    info.title = _last_title(tail) or _last_title(head)
+    return info
+
+
+def _last_title(chunk: bytes) -> Optional[str]:
+    for raw in reversed(chunk.split(b"\n")):
+        title = _title_of(_parse(raw)) if b"ai-title" in raw else None
+        if title:
+            return title
+    return None
 
 
 def last_permission_mode(path: Path) -> Optional[str]:
@@ -242,7 +295,7 @@ def _mtime(path: Path) -> Optional[float]:
 
 def find_transcript(session_id: str, projects_dir: Path) -> Optional[Path]:
     """<projects_dir>/<any project>/<session_id>.jsonl, the most recently written if there are several."""
-    if not isinstance(session_id, str) or not SESSION_ID.match(session_id):
+    if not valid_session_id(session_id):
         return None
     try:
         projects = list(Path(projects_dir).iterdir())

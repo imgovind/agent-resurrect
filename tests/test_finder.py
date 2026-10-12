@@ -235,6 +235,68 @@ class TranscriptMetaTest(FinderTestCase):
         for unsafe in ["", "*", "../-Users-me-proj/83fc435f-73ea-41b2-b2e3-076ee2c3f7b0", "a/b", None]:
             self.assertIsNone(finder.find_transcript(unsafe, self.projects), unsafe)
 
+    def test_valid_session_id(self):
+        self.assertTrue(finder.valid_session_id("83fc435f-73ea-41b2-b2e3-076ee2c3f7b0"))
+        self.assertTrue(finder.valid_session_id("s1"))
+        # A leading dash would reach `claude --resume` as a flag; a trailing newline slips past re "$".
+        for unsafe in ["", "-rf", "--dangerously-skip-permissions", "../x", "a b", "s1\n", "*", None, 5]:
+            self.assertFalse(finder.valid_session_id(unsafe), repr(unsafe))
+        write_session(self.projects, "-Users-me-proj", "s1", [user("a")])
+        self.assertIsNone(finder.find_transcript("s1\n", self.projects))
+
+
+def filler(count, sid="s1"):
+    """About `count` KB of assistant chatter that mentions no title, prompt or mode."""
+    return [assistant("x" * 1000, sid=sid) for _ in range(count)]
+
+
+class SessionInfoTest(FinderTestCase):
+    """session_info reads a 64 KB head (start time, first prompt) and a 256 KB tail (latest title): never the
+    whole transcript, which reaches hundreds of MB and is read for every pane in `ls` and at every restore."""
+
+    def test_small_transcript_matches_transcript_meta(self):
+        path = write_session(self.projects, "-Users-me-proj", "s1", [
+            {"type": "ai-title", "aiTitle": "Old title"},
+            user("hello   there\n  friend"), assistant("hi"),
+            {"type": "ai-title", "aiTitle": "Fix login"}])
+        info = finder.session_info(path)
+        self.assertEqual(info, finder.transcript_meta(path).info)
+        self.assertEqual((info.title, info.first_prompt, info.started), ("Fix login", "hello there friend",
+                                                                          "2026-10-10T10:00:00Z"))
+        self.assertAlmostEqual(info.last_active, path.stat().st_mtime)
+
+    def test_large_transcript_reads_head_and_tail_only(self):
+        head = [{"type": "system", "timestamp": "2026-10-10T09:00:00Z"},
+                dict(user("<system-reminder>context</system-reminder>"), isMeta=True),
+                tool_result("ls output"), user("fix the login page")]
+        records = head + filler(200) + [{"type": "ai-title", "aiTitle": "Middle title"}] + filler(300)
+        path = write_session(self.projects, "-Users-me-proj", "s1", records + [
+            {"type": "ai-title", "aiTitle": "Final title"}, assistant("done")])
+        self.assertGreater(path.stat().st_size, finder.HEAD_BYTES + finder.TAIL_BYTES)
+        info = finder.session_info(path)
+        self.assertEqual((info.title, info.first_prompt, info.started),
+                         ("Final title", "fix the login page", "2026-10-10T09:00:00Z"))
+        # A title only in the unread middle is not found: proof that the middle is never read.
+        path = write_session(self.projects, "-Users-me-proj", "s2", records)
+        self.assertIsNone(finder.session_info(path).title)
+        self.assertEqual(finder.transcript_meta(path).info.title, "Middle title")
+
+    def test_title_falls_back_to_the_head(self):
+        path = write_session(self.projects, "-Users-me-proj", "s1", [
+            user("hello there"), {"type": "ai-title", "aiTitle": "Early title"}] + filler(400))
+        self.assertEqual(finder.session_info(path).title, "Early title")
+
+    def test_lines_cut_by_the_head_or_tail_boundary_are_skipped(self):
+        # The first prompt alone is longer than the head, so it is cut and cannot be parsed.
+        path = write_session(self.projects, "-Users-me-proj", "s1", [
+            user("y" * (finder.HEAD_BYTES + 10))] + filler(400) + [{"type": "ai-title", "aiTitle": "T"}])
+        info = finder.session_info(path)
+        self.assertEqual((info.title, info.first_prompt), ("T", None))
+
+    def test_unreadable_transcript_raises_oserror(self):
+        with self.assertRaises(OSError):
+            finder.session_info(self.projects / "missing.jsonl")
+
 
 if __name__ == "__main__":
     unittest.main()
