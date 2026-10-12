@@ -812,10 +812,16 @@ class CliAdoptTest(CliCase):
         self.assertIn("session", err)
 
     def test_adopt_failure_is_an_error(self):
-        self.agent = AdoptAgent(error=RuntimeError("ps exploded"))
-        code, out, err = self.run_cli("adopt")
-        self.assertEqual(code, ERROR)
-        self.assertIn("ps exploded", err)
+        # T2: adopt raises OSError only when the record cannot be saved; anything else is unexpected.
+        for error, says in ((OSError("No space left on device"), "could not record the fake session"),
+                            (RuntimeError("ps exploded"), "adopt failed")):
+            self.agent = AdoptAgent(error=error)
+            code, out, err = self.run_cli("adopt")
+            self.assertEqual(code, ERROR)
+            self.assertIn(says, err)
+            self.assertIn(str(error), err)
+            self.assertEqual(len(err.strip().splitlines()), 1, err)
+            self.assertIn(str(error), paths.log_path().read_text())
 
 
 # ---------------------------------------------------------------------------------------------- config

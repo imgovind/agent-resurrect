@@ -456,7 +456,12 @@ def cmd_adopt(args: argparse.Namespace) -> int:
                      "nothing to record", recorded=False, pane=None, session=None)
     ctx = _hook_context(terminal, pane_key)
     for agent in all_agents():
-        record = agent.adopt(ctx)
+        try:
+            record = agent.adopt(ctx)  # the saved record, or None when not inside a recordable session
+        except OSError as exc:  # the record could not be saved
+            _log_quietly(f"adopt: {traceback.format_exc()}")
+            return _fail(args, "adopt", ERROR, f"could not record the {agent.name} session: {exc}",
+                         recorded=False, pane=None, session=None)
         if record is not None:
             break
     else:

@@ -163,6 +163,15 @@ class SchemaFilesTest(unittest.TestCase):
         for name in ("OK", "NOT_LIVE", "TOO_OLD", "AGENT_RUNNING", "SESSION_GONE"):
             self.assertIn(getattr(restore, name), reasons)
 
+    def test_doctor_schema_allows_unknown_boot_time_and_open_check_ids(self):
+        document = standin_doctor_document()
+        document.update(since_boot=None, records=dict(document["records"], died_since_boot=None))
+        document["context"].update(login_shell="/bin/zsh", multiplexer=None)
+        document["checks"].append({"id": "shell.exec_before_block", "status": "warn", "detail": "x", "fix": None})
+        self.assertEqual(validate(document, "doctor"), [])
+        document["context"]["multiplexer"] = 1
+        self.assertNotEqual(validate(document, "doctor"), [])
+
     def test_the_validator_rejects_what_it_should(self):
         good = jsonout.document("version", python="3.9.6", executable="/usr/bin/python3", package_dir="/x")
         self.assertEqual(validate(good, "version"), [])
@@ -479,8 +488,9 @@ class AdoptContractTest(ContractCase):
         self.assertIsNone(self.contract("adopt", "--json", code=NOT_FOUND)["pane"])
 
     def test_failure(self):
-        self.agent = AdoptAgent(error=RuntimeError("ps exploded"))
-        self.assertIn("ps exploded", self.contract("adopt", "--json", code=ERROR)["error"]["message"])
+        for error in (OSError("No space left on device"), RuntimeError("ps exploded")):
+            self.agent = AdoptAgent(error=error)
+            self.assertIn(str(error), self.contract("adopt", "--json", code=ERROR)["error"]["message"])
 
 
 class ConfigContractTest(ContractCase):
@@ -552,14 +562,19 @@ class FakeSetting(Setting):
         pass
 
 
-def standin_doctor_run(out=None, *, procs=None, boot_time=None, as_json=False, strict=False):
-    """The v0.2 plan's doctor.run --json shape (T4), used only while doctor.py lacks as_json."""
-    jsonout.emit(jsonout.document(
+def standin_doctor_document() -> dict:
+    """The v0.2 plan's doctor --json shape (T4)."""
+    return jsonout.document(
         "doctor", ready=True, summary={"ok": 1, "warn": 0, "fail": 0},
         checks=[{"id": "python", "status": "ok", "detail": "python 3", "fix": None}],
         context={"terminal": None, "pane_key": None, "launcher": None, "log_path": "/tmp/log", "boot_time": None},
         records={"total": 0, "live": 0, "restorable": 0, "died_since_boot": 0},
-        since_boot={"resumed": 0, "skipped": 0, "launch-failed": 0, "offered": 0, "not-a-tty": 0}), out)
+        since_boot={"resumed": 0, "skipped": 0, "launch-failed": 0, "offered": 0, "not-a-tty": 0})
+
+
+def standin_doctor_run(out=None, *, procs=None, boot_time=None, as_json=False, strict=False):
+    """Used only while doctor.py lacks as_json."""
+    jsonout.emit(standin_doctor_document(), out)
     return OK
 
 
