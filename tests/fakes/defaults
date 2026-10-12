@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Fake macOS `defaults` for tests. It never touches real preferences.
+
+State lives in the JSON file named by $FAKE_DEFAULTS_DB:
+    {domain: {key: {"type": "boolean" | "integer" | "float" | "string" | ..., "value": "<as `defaults read` prints it>"}}}
+Booleans are stored as "1"/"0", which is how the real `defaults read` prints them.
+
+Supported: read, read-type, write <domain> <key> -bool|-int|-float|-string <value>, delete.
+Each call is appended as a JSON line to $FAKE_CALLS_LOG when that variable is set.
+"""
+import json
+import os
+import sys
+
+GLOBAL_ALIASES = ("-g", "-globalDomain", "NSGlobalDomain")
+TYPE_FLAGS = {"-bool": "boolean", "-boolean": "boolean", "-int": "integer", "-integer": "integer",
+              "-float": "float", "-string": "string"}
+
+
+def log_call(argv):
+    path = os.environ.get("FAKE_CALLS_LOG")
+    if path:
+        with open(path, "a") as fh:
+            fh.write(json.dumps(["defaults"] + argv) + "\n")
+
+
+def load(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+
+
+def save(path, db):
+    with open(path, "w") as fh:
+        json.dump(db, fh, indent=1, sort_keys=True)
+
+
+def missing(domain, key):
+    print(f"\nThe domain/default pair of ({domain}, {key}) does not exist", file=sys.stderr)
+    return 1
+
+
+def coerce(type_, raw):
+    if type_ == "boolean":
+        lowered = raw.lower()
+        if lowered in ("true", "yes"):
+            return "1"
+        if lowered in ("false", "no"):
+            return "0"
+        raise ValueError("Value for -bool must be TRUE, FALSE, YES, or NO")
+    if type_ == "integer":
+        return str(int(raw))
+    if type_ == "float":
+        return repr(float(raw))
+    return raw
+
+
+def main(argv):
+    log_call(argv)
+    db_path = os.environ.get("FAKE_DEFAULTS_DB")
+    if not db_path:
+        print("fake defaults: FAKE_DEFAULTS_DB is not set", file=sys.stderr)
+        return 99
+    if len(argv) < 3:
+        print("fake defaults: usage: defaults read|read-type|write|delete <domain> <key> ...", file=sys.stderr)
+        return 2
+    command, domain_arg, key = argv[0], argv[1], argv[2]
+    domain = "NSGlobalDomain" if domain_arg in GLOBAL_ALIASES else domain_arg
+    db = load(db_path)
+    entry = db.get(domain, {}).get(key)
+
+    if command in ("read", "read-type"):
+        if entry is None:
+            return missing(domain_arg, key)
+        print(entry["value"] if command == "read" else f"Type is {entry['type']}")
+        return 0
+
+    if command == "write":
+        if len(argv) != 5 or argv[3] not in TYPE_FLAGS:
+            print("fake defaults: write needs <domain> <key> -bool|-int|-float|-string <value>", file=sys.stderr)
+            return 2
+        type_ = TYPE_FLAGS[argv[3]]
+        try:
+            value = coerce(type_, argv[4])
+        except ValueError as exc:
+            print(f"fake defaults: {exc}", file=sys.stderr)
+            return 1
+        db.setdefault(domain, {})[key] = {"type": type_, "value": value}
+        save(db_path, db)
+        return 0
+
+    if command == "delete":
+        if entry is None:
+            return missing(domain_arg, key)
+        del db[domain][key]
+        if not db[domain]:
+            del db[domain]
+        save(db_path, db)
+        return 0
+
+    print(f"fake defaults: unsupported command {command}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
