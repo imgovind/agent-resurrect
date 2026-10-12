@@ -210,6 +210,40 @@ class HereFallbackTest(PaneCase):
         self.assertNotIn("Other candidates", out)
         self.assertIn("Resume it here? [Y/n]", out)
 
+    def test_yes_searches_and_resumes_a_strong_match_without_asking(self):
+        # stdin is empty: any prompt would read EOF, count as "no" and launch nothing.
+        for argv in (("-y",), ("here", "--yes")):
+            with self.subTest(argv=argv):
+                terminal, _ = self.use(PaneTerminal(SCROLLBACK), FindingAgent())
+                self.launched.clear()
+                code, out, err = self.run_cli(*argv, stdin="", tty=True)
+                self.assertEqual(code, OK, err)
+                self.assertEqual(terminal.reads, 1)
+                self.assertEqual(len(self.launched), 1)
+                self.assertIn("s-found", self.launched[0].argv)
+                self.assertNotIn("[Y/n]", out)
+
+    def test_yes_still_asks_before_resuming_a_weak_match(self):
+        self.use(PaneTerminal(SCROLLBACK), FindingAgent(hits=1))
+        code, out, _ = self.run_cli("-y", stdin="\n", tty=True)
+        self.assertEqual((code, self.launched), (OK, []))
+        self.assertIn("--yes resumes only a strong match", out)
+        self.assertIn("[y/N]", out)
+
+    def test_yes_without_a_terminal_still_reads_nothing(self):
+        terminal, _ = self.use(PaneTerminal(SCROLLBACK), FindingAgent())
+        code, out, _ = self.run_cli("-y")
+        self.assertEqual((code, terminal.reads, self.launched), (NOT_FOUND, 0, []))
+        self.assertIn("find --from-pane", out)
+
+    def test_yes_never_opens_a_session_running_in_another_pane(self):
+        self.use(PaneTerminal(SCROLLBACK), FindingAgent())
+        put(make_record(pane_key="fake-other", session_id="s-found", agent_pid=777), 5)
+        self.procs.table[777] = proc(777, 1, "claude")
+        code, _, err = self.run_cli("-y", stdin="", tty=True)
+        self.assertEqual((code, self.launched), (BUSY, []))
+        self.assertIn("still running", err)
+
     def test_no_match(self):
         self.use(PaneTerminal("just an ordinary line of shell output with nothing relevant in it"), FindingAgent())
         code, out, _ = self.run_cli(stdin="y\n", tty=True)

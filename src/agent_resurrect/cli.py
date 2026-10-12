@@ -357,7 +357,7 @@ def cmd_here(args: argparse.Namespace) -> int:
     print(NOTHING_RECORDED)
     if pane_key is not None and _reads_pane_text(terminal) and not args.print:
         if restore.has_terminal():
-            if _confirm("Search this pane's scrollback for the session that ran here? [Y/n] "):
+            if args.yes or _confirm("Search this pane's scrollback for the session that ran here? [Y/n] "):
                 return _here_from_pane(args)
         else:  # never prompt without a terminal; say how instead
             _say(f"To search this pane's scrollback for the session, run: {PROG} find --from-pane")
@@ -368,7 +368,8 @@ def cmd_here(args: argparse.Namespace) -> int:
 
 def _here_from_pane(args: argparse.Namespace) -> int:
     """`here` with nothing recorded: search this pane's scrollback, show the match, and resume it only after
-    the user says yes (default yes only for a strong match)."""
+    the user says yes (default yes only for a strong match). --yes skips that question for a strong match only:
+    a weak or ambiguous one is a guess, so it is still asked, and a session running elsewhere is still refused."""
     text = _pane_scrollback(marker=NOTHING_RECORDED)
     if not text or not text.strip():
         _error(PANE_UNREADABLE if text is None else "this pane's scrollback is empty; nothing to search")
@@ -389,8 +390,10 @@ def _here_from_pane(args: argparse.Namespace) -> int:
     _print_others(found)
     print()
     strong = confidence == "strong"
-    if not _confirm("Resume it here? [Y/n] " if strong else "Resume the best match here anyway? [y/N] ",
-                    default=strong):
+    if args.yes and not strong:
+        _say(f"--yes resumes only a strong match; this one is {confidence}.")
+    if not (args.yes and strong) and not _confirm(
+            "Resume it here? [Y/n] " if strong else "Resume the best match here anyway? [y/N] ", default=strong):
         _say(f"Not resumed. Resume it later with: {PROG} resume {best.session_id}")
         return OK
     # A stored record carries the agent's pid, so a session still running in another pane is refused (busy)
@@ -886,7 +889,10 @@ def _parser() -> argparse.ArgumentParser:
                                   "docs/json/)")
         return command
 
-    launching("here", "resume what died in this pane (the default); needs a terminal")
+    here = launching("here", "resume what died in this pane (the default); needs a terminal")
+    here.add_argument("--yes", "-y", action="store_true",
+                      help="if nothing is recorded for this pane, search its scrollback and resume a strong "
+                           "match without asking (a weak or ambiguous match still asks)")
     ls = sub.add_parser("ls", help="list sessions that can be resurrected, newest first")
     ls.add_argument("--all", action="store_true", help="also list sessions whose agent is still running")
     ls.add_argument("--ids", action="store_true", help="add a session id column")
