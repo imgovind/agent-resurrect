@@ -124,6 +124,14 @@ class FindFromPaneTest(PaneCase):
         self.assertEqual((code, doc["ok"], doc["query"]["source"]), (OK, True, "pane"))
         self.assertEqual(doc["best"]["session"]["session_id"], "s-found")
 
+    def test_json_shows_no_spinner_even_on_a_terminal(self):
+        self.use(PaneTerminal("Claude: the word is pineapple."), FindingAgent())
+        with mock.patch.object(cli, "_isatty", lambda stream: True):  # stderr looks like a terminal too
+            code, out, err = self.run_cli("find", "--from-pane", "--json", tty=True)
+        self.assertEqual(code, OK)
+        self.assertEqual(err, "")
+        self.assertEqual(json.loads(out)["query"]["source"], "pane")
+
     def test_unreadable_or_unsupported_pane_is_an_error(self):
         for terminal in (PaneTerminal(None), FakeTerminal()):
             with self.subTest(terminal=type(terminal).__name__):
@@ -200,6 +208,28 @@ class HereFallbackTest(PaneCase):
         terminal, _ = self.use(PaneTerminal(SCROLLBACK), FindingAgent())
         code, out, _ = self.run_cli("--json", tty=True)
         self.assertEqual((code, json.loads(out)["error"]["code"], terminal.reads), (NOT_FOUND, "not-found", 0))
+
+
+class ProgressTest(unittest.TestCase):
+    def run_progress(self, tty, enabled=True):
+        from tests.test_cli import FakeStream
+        err = FakeStream(tty=tty)
+        with mock.patch("sys.stderr", err):
+            with cli._Progress("Searching your Claude Code sessions", enabled=enabled):
+                import time
+                time.sleep(0.25)
+        return err.getvalue()
+
+    def test_spins_with_elapsed_time_then_clears_the_line_on_a_terminal(self):
+        out = self.run_progress(tty=True)
+        self.assertIn("\rSearching your Claude Code sessions ", out)
+        self.assertRegex(out, r"\d+\.\ds")
+        self.assertTrue(out.endswith("\r\x1b[K"))
+
+    def test_silent_when_stderr_is_not_a_terminal_or_disabled(self):
+        self.assertEqual(self.run_progress(tty=False), "")
+        self.assertEqual(self.run_progress(tty=True, enabled=False), "")
+
 
 
 if __name__ == "__main__":

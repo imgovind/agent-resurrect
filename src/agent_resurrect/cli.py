@@ -13,6 +13,8 @@ import os
 import platform
 import subprocess
 import sys
+import threading
+import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
@@ -372,7 +374,8 @@ def _here_from_pane(args: argparse.Namespace) -> int:
         _error(PANE_UNREADABLE if text is None else "this pane's scrollback is empty; nothing to search")
         return NOT_FOUND
     try:
-        found = _search(text, limit=5)
+        with _Progress("Searching your Claude Code sessions"):
+            found = _search(text, limit=5)
     except ValueError as exc:
         _error(str(exc))
         return NOT_FOUND
@@ -516,12 +519,51 @@ def _read_clipboard() -> Optional[str]:
     return result.stdout if result.returncode == 0 else None
 
 
+class _Progress:
+    """A one-line spinner with elapsed seconds on stderr while a slow step runs, cleared when it ends.
+    Silent unless stderr is a terminal, so pipes, logs and --json output never see it."""
+
+    FRAMES = "|/-\\"
+
+    def __init__(self, message: str, enabled: bool = True):
+        self.message = message
+        self.enabled = enabled and _isatty(sys.stderr)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._started = 0.0
+
+    def __enter__(self) -> "_Progress":
+        self._started = time.monotonic()
+        if self.enabled:
+            self._thread = threading.Thread(target=self._spin, daemon=True)
+            self._thread.start()
+        return self
+
+    def _spin(self) -> None:
+        frame = 0
+        while True:
+            elapsed = time.monotonic() - self._started
+            sys.stderr.write(f"\r{self.message} {self.FRAMES[frame % len(self.FRAMES)]} {elapsed:4.1f}s")
+            sys.stderr.flush()
+            frame += 1
+            if self._stop.wait(0.1):
+                break
+
+    def __exit__(self, *exc) -> bool:
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join()
+            sys.stderr.write("\r\033[K")  # clear the spinner line
+            sys.stderr.flush()
+        return False
+
+
 def _reads_pane_text(terminal) -> bool:
     """True if this terminal adapter can return a pane's scrollback (it overrides TerminalAdapter.pane_text)."""
     return terminal is not None and type(terminal).pane_text is not TerminalAdapter.pane_text
 
 
-def _pane_scrollback(marker: str) -> Optional[str]:
+def _pane_scrollback(marker: str, show_progress: bool = True) -> Optional[str]:
     """This pane's recent scrollback, to search for the session that ran here; None if it cannot be read.
     The text is only searched: never stored, logged or printed. Everything from the last line containing
     `marker` (the command doing the reading) onward is dropped, as are trailing agent-resurrect command lines,
@@ -529,7 +571,8 @@ def _pane_scrollback(marker: str) -> Optional[str]:
     terminal, key = _pane_context()
     if key is None or not _reads_pane_text(terminal):
         return None
-    text = terminal.pane_text(os.environ, max_lines=PANE_LINES)
+    with _Progress("Reading this pane's scrollback", enabled=show_progress):
+        text = terminal.pane_text(os.environ, max_lines=PANE_LINES)
     if text is None:
         return None
     lines = text.splitlines()
@@ -620,7 +663,7 @@ def cmd_find(args: argparse.Namespace) -> int:
             return _fail(args, "find", NEEDS_TTY,
                          "--from-pane reads this pane's scrollback, so it only runs when you type it in a terminal",
                          query={"characters": 0, "probes": None, "source": "pane"})
-        text = _pane_scrollback(marker="--from-pane")
+        text = _pane_scrollback(marker="--from-pane", show_progress=not args.json)
         if text is None:
             return _fail(args, "find", ERROR, PANE_UNREADABLE,
                          query={"characters": 0, "probes": None, "source": "pane"})
@@ -635,7 +678,8 @@ def cmd_find(args: argparse.Namespace) -> int:
         return _fail(args, "find", USAGE, "no text to search for; pass it as arguments, pipe it on stdin, "
                                           "or use --clipboard or --from-pane", query=query)
     try:
-        found = _search(text, args.limit)
+        with _Progress("Searching your Claude Code sessions", enabled=not args.json):
+            found = _search(text, args.limit)
     except ValueError as exc:  # e.g. too little text to build search probes from
         return _fail(args, "find", USAGE, str(exc), query=query)
     confidence = views.confidence([c for _, c in found])

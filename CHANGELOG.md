@@ -9,6 +9,7 @@ All notable changes to agent-resurrect are recorded here. The format follows [Ke
 ### Added
 - When `agent-resurrect` finds nothing recorded for a pane, it offers to search that pane's recent scrollback (iTerm2) for the session that ran there, shows the match, and asks before resuming it: yes by default for a strong match, no for a weak or ambiguous one. No copying and pasting needed.
 - `agent-resurrect find --from-pane` does the same search and only prints the result. Its JSON output marks `query.source` as `pane`.
+- While the scrollback is read and the sessions are searched, a one-line spinner with the elapsed seconds shows that it is working. It appears only in a terminal, never in `--json` output or pipes.
 
 ### Safety
 - The scrollback is read only when a person types the command in a terminal, only for that pane, and only for the search. It is never stored, logged, printed or sent anywhere. Without a terminal, `find --from-pane` exits with status 4 and reads nothing.
