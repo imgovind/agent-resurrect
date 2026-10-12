@@ -156,6 +156,9 @@ def _remove_files(purge: bool, keep_manifest: bool) -> StepResult:
     elif not keep_manifest and paths.manifest_path().exists():
         paths.manifest_path().unlink()
         removed.append(str(paths.manifest_path()))
+    # Last: this process runs with its bytecode cache in here, so nothing should be imported after it goes.
+    if _remove_tree(paths.cache_dir()):
+        removed.append(str(paths.cache_dir()))
     return StepResult("files", REVERTED if removed else UNCHANGED,
                       ", ".join(removed) if removed else "nothing to remove")
 

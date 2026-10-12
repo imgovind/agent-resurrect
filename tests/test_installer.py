@@ -132,6 +132,10 @@ class InstallerTest(unittest.TestCase):
             paths.config_path().write_text("[agent-resurrect]\n")
             paths.panes_dir().mkdir(parents=True)
             (paths.panes_dir() / "iterm-x.json").write_text("{}")
+            cache = paths.home() / ".cache" / "agent-resurrect"
+            self.assertEqual(paths.cache_dir(), cache)
+            (cache / "pycache" / "usr").mkdir(parents=True)  # the launcher's -X pycache_prefix tree
+            (paths.home() / ".cache" / "other-app").mkdir()
 
             journal.clear()
             results = installer.uninstall([a, b, c])
@@ -142,6 +146,8 @@ class InstallerTest(unittest.TestCase):
             self.assertFalse(os.path.lexists(bin_dir / "agent-resurrect"))
             self.assertFalse(os.path.lexists(bin_dir / "resurrect"))
             self.assertTrue((bin_dir / "other-tool").exists())
+            self.assertFalse(cache.exists())  # program files: removed without --purge
+            self.assertTrue((paths.home() / ".cache" / "other-app").is_dir())
             self.assertFalse(paths.manifest_path().exists())
             self.assertTrue((paths.panes_dir() / "iterm-x.json").exists())
             self.assertTrue(paths.config_path().exists())

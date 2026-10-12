@@ -135,8 +135,11 @@ write_launchers() {
   tmp="$launcher.tmp.$$"
   {
     printf '#!/bin/sh\n'
+    # pycache_prefix: the system Python's standard library has no bytecode and is read-only, so without a
+    # writable cache every run (each Claude Code hook) would recompile it: about 155 ms instead of 45 ms.
     # shellcheck disable=SC2016  # "$@" is meant literally: it belongs to the launcher, not to this script
-    printf 'exec %s -I %s "$@"\n' "$(sh_quote "$PYTHON")" "$(sh_quote "$DATA/bin/agent-resurrect.py")"
+    printf 'exec %s -I -X %s %s "$@"\n' "$(sh_quote "$PYTHON")" \
+      "$(sh_quote "pycache_prefix=$HOME/.cache/agent-resurrect/pycache")" "$(sh_quote "$DATA/bin/agent-resurrect.py")"
   } >"$tmp"
   chmod 755 "$tmp"
   mv -f "$tmp" "$launcher"

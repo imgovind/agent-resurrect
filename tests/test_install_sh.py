@@ -18,7 +18,8 @@ DONE = "Installed. Open a new terminal tab to activate. Uninstall any time with:
 STUB_CLI = '''"""Stand-in for bin/agent-resurrect.py: records how the launcher ran it."""
 import json, os, sys
 with open(os.environ["STUB_LOG"], "a") as fh:
-    fh.write(json.dumps({"argv": sys.argv[1:], "isolated": sys.flags.isolated}) + "\\n")
+    fh.write(json.dumps({"argv": sys.argv[1:], "isolated": sys.flags.isolated,
+                         "pycache_prefix": sys.pycache_prefix}) + "\\n")
 '''
 
 
@@ -115,7 +116,8 @@ class InstallShTest(unittest.TestCase):
         self.assertTrue(os.access(launcher, os.X_OK))
         text = launcher.read_text()
         self.assertTrue(text.startswith("#!/bin/sh\nexec "), text)
-        self.assertIn(f" -I '{data}/bin/agent-resurrect.py' \"$@\"\n", text)
+        pycache = self.home / ".cache" / "agent-resurrect" / "pycache"
+        self.assertIn(f" -I -X 'pycache_prefix={pycache}' '{data}/bin/agent-resurrect.py' \"$@\"\n", text)
         self.assertEqual(os.readlink(bin_dir / "resurrect"), "agent-resurrect")
         self.assertTrue((data / "src" / "agent_resurrect" / "__init__.py").exists())
         self.assertTrue((data / "install.sh").exists())
@@ -125,6 +127,8 @@ class InstallShTest(unittest.TestCase):
         calls = self.stub_calls()
         self.assertEqual([c["argv"] for c in calls], [["install", "--yes"], ["doctor"]] * 2)
         self.assertTrue(all(c["isolated"] for c in calls))
+        # Bytecode, the stdlib's included, is cached outside the read-only system Python.
+        self.assertEqual({c["pycache_prefix"] for c in calls}, {str(pycache)})
 
     def test_install_sh_keeps_a_resurrect_that_is_not_ours(self):
         clone = self.make_clone()

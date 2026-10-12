@@ -30,6 +30,11 @@ def bin_dir() -> Path:
     return home() / ".local" / "bin"
 
 
+def cache_dir() -> Path:
+    """Bytecode cache (the launcher's `-X pycache_prefix`). Fixed under HOME: install.sh writes the same path."""
+    return home() / ".cache" / APP
+
+
 def panes_dir() -> Path:
     return state_dir() / "panes"
 
