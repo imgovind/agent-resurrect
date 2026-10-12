@@ -80,6 +80,15 @@ curl -fsSL https://github.com/imgovind/agent-resurrect/releases/latest/download/
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
+### Install with Homebrew
+
+```bash
+brew install imgovind/tap/agent-resurrect
+agent-resurrect install
+```
+
+Homebrew installs the program; `agent-resurrect install` then makes the same changes as the install line (the iTerm2 settings, the shell block and the Claude Code plugin), pointed at Homebrew's copy. Use one method or the other. If you installed with the install line, run `~/.local/bin/agent-resurrect uninstall` first; it keeps your session records and config. `agent-resurrect install` will not mix the two, and says what to run if you try.
+
 ### Install from inside Claude Code
 
 Run these three commands in a Claude Code session:
@@ -410,6 +419,8 @@ curl -fsSL https://github.com/imgovind/agent-resurrect/releases/latest/download/
 
 It replaces the program files and keeps your session records, your config and the original settings it saved the first time, so `agent-resurrect uninstall` still restores what you had before you ever installed it. An existing shell block is updated in place. Open a new tab afterwards.
 
+With Homebrew, run `brew upgrade agent-resurrect`, then `agent-resurrect install` to update the Claude Code plugin.
+
 Upgrading from 0.1.0 also puts back your macOS-wide "Close windows when quitting an application" setting, which 0.1.0 changed for every app. 0.2.0 sets iTerm2's own preference instead.
 
 Check which version you have:
@@ -437,6 +448,8 @@ Without a terminal it does not ask; add `--yes`. In a script, or when Claude Cod
 ```bash
 ~/.local/bin/agent-resurrect uninstall --yes
 ```
+
+With Homebrew, run `agent-resurrect uninstall` first, then `brew uninstall agent-resurrect`: Homebrew cannot undo the settings itself.
 
 If the manifest of original values cannot be read, uninstall stops before changing anything and says why, so nothing is lost. If one setting fails to revert, the others are still reverted, and the program files and the failed entry are kept so you can run uninstall again.
 
@@ -626,12 +639,12 @@ Where others do more today: claude-hibernate and Quil work on Linux and with tmu
 
 ## Roadmap
 
-Version 0.2 supports Claude Code in iTerm2 on macOS. Agents and terminals sit behind separate adapter interfaces, so each of these is a separate, separately tested addition:
+Version 0.3 supports Claude Code in iTerm2 on macOS. Agents and terminals sit behind separate adapter interfaces, so each of these is a separate, separately tested addition:
 
 - Agents: Codex, Cursor agent, opencode, Qoder. These will be recorded from the shell, since they may not offer Claude-style session hooks.
 - Terminals: Ghostty, Warp, WezTerm, Kitty, tmux, Terminal.app.
 - Reopening sessions whose panes were not restored in new tabs.
-- A Homebrew tap, and a signed, notarized `.pkg` installer.
+- A signed, notarized `.pkg` installer, and Homebrew's own repository once the project qualifies.
 
 Want one of these sooner? [Request an agent or terminal](https://github.com/imgovind/agent-resurrect/issues/new/choose).
 

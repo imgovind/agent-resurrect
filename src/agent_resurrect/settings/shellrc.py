@@ -97,7 +97,9 @@ class ShellRcBlock(Setting):
     .zshrc is created only when zsh is the login shell (or the login shell is unknown: zsh is macOS's default).
     A fish or nushell user would otherwise get a .zshrc that nothing ever reads."""
 
-    fix_hint = "run: ~/.local/bin/agent-resurrect install"
+    @property
+    def fix_hint(self) -> str:
+        return f"run: {paths.command()} install"
 
     def __init__(self, shell: str):
         if shell not in SHELLS:
@@ -135,12 +137,18 @@ class ShellRcBlock(Setting):
         return f"zsh is not your login shell ({login_shell()}) and there is no {display_path(self.target())}"
 
     def block(self) -> str:
-        snippet = shell_path(paths.data_dir() / "shell" / f"agent-resurrect.{self.shell}")
+        snippet = shell_path(paths.program_dir() / "shell" / f"agent-resurrect.{self.shell}")
+        if paths.package_home() is None:
+            # Appended, so ~/.local/bin never shadows the user's own pyenv, Homebrew or uv tools.
+            locate = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac'
+        else:
+            # The package manager already put the command on PATH; the snippet runs the package's command.
+            # A plain shell variable, not exported: only the snippet reads it.
+            locate = f'AGENT_RESURRECT_BIN="{shell_path(paths.launcher())}"'
         return "\n".join([
             BEGIN,
             "# Managed by agent-resurrect. Remove with: agent-resurrect uninstall",
-            # Appended, so ~/.local/bin never shadows the user's own pyenv, Homebrew or uv tools.
-            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac',
+            locate,
             f'[ -f "{snippet}" ] && . "{snippet}"',
             END,
         ]) + "\n"

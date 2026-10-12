@@ -15,7 +15,7 @@
 # XDG_DATA_HOME is honoured.
 set -euo pipefail
 
-DEFAULT_REF="v0.2.1"
+DEFAULT_REF="v0.3.0"
 # The install.sh attached to each GitHub release has this set, by .github/workflows/release.yml, to the full
 # commit SHA that DEFAULT_REF named when it was released. A tag can be moved and a commit cannot, so that
 # installer downloads exactly the code that was released. It is set here only, never from the environment.

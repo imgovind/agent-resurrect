@@ -14,7 +14,7 @@ class LegacyKeepWindowsOnQuit(BoolDefaultsSetting):
     id = LEGACY_ID
     description = ('Give back your macOS-wide "Close windows when quitting an application" setting '
                    "(agent-resurrect 0.1 changed it for every app; it now changes it for iTerm2 only)")
-    fix_hint = "run: ~/.local/bin/agent-resurrect install"
+    fix_hint = "run: ~/.local/bin/agent-resurrect install"  # never shown: the setting is only reverted
     skip_detail = "only reverted, never applied"
     ok_detail = "macOS keeps windows when quitting an application"
     keys = [BoolKey(GLOBAL_DOMAIN, "NSQuitAlwaysKeepsWindows", want=True, default=False)]

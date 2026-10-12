@@ -28,7 +28,8 @@ def iterm_app() -> Path:
     return user if user.exists() else system
 
 
-_INSTALL_ITERM = "install iTerm2 from https://iterm2.com, then run: ~/.local/bin/agent-resurrect install"
+def _install_iterm() -> str:
+    return f"install iTerm2 from https://iterm2.com, then run: {paths.command()} install"
 
 
 class _NeedsITerm:
@@ -36,14 +37,14 @@ class _NeedsITerm:
     Without iTerm2, install skips the setting and doctor's fix is to install iTerm2, never to rerun install."""
 
     skip_detail = "iTerm2 is not installed"
-    _fix_hint = "run: ~/.local/bin/agent-resurrect install"
+    _fix_also = ""  # another way to fix it, after the install command
 
     def applicable(self) -> bool:
         return iterm_app().exists()
 
     @property
     def fix_hint(self) -> str:
-        return self._fix_hint if self.applicable() else _INSTALL_ITERM
+        return f"run: {paths.command()} install{self._fix_also}" if self.applicable() else _install_iterm()
 
     def check(self) -> Check:
         if not self.applicable():
@@ -101,8 +102,7 @@ class ITermRestorePolicy(_NeedsITerm, BoolDefaultsSetting):
 
     id = "iterm.restore_policy"
     description = 'iTerm2 restores its windows at launch (Startup: "Use System Window Restoration Setting")'
-    _fix_hint = ('run: ~/.local/bin/agent-resurrect install, or set iTerm2 Settings > General > Startup to '
-                 '"Use System Window Restoration Setting"')
+    _fix_also = ', or set iTerm2 Settings > General > Startup to "Use System Window Restoration Setting"'
     ok_detail = "iTerm2 restores its windows at launch"
     keys = [BoolKey(ITERM_DOMAIN, "OpenArrangementAtStartup", want=False, default=False),
             BoolKey(ITERM_DOMAIN, "OpenNoWindowsAtStartup", want=False, default=False)]

@@ -13,7 +13,7 @@ https://code.claude.com/docs/en/plugins/cli-reference (2026-10-12):
 The plugin can also be installed without this installer: `/plugin marketplace add imgovind/agent-resurrect`
 declares a GitHub marketplace with the same name, and the plugin may be installed at project or local scope, or
 from another marketplace. Any installed `agent-resurrect@*` counts as installed, and only our own install (this
-plugin id, user scope, from the directory marketplace at paths.data_dir()) is ever updated, enabled or removed.
+plugin id, user scope, from the directory marketplace at paths.program_dir()) is ever updated, enabled or removed.
 A marketplace that already has our name is used as it is, never declared a second time.
 """
 import json
@@ -48,7 +48,7 @@ def _same_path(a: str, b: str) -> bool:
 
 
 def _is_local_marketplace(row: dict) -> bool:
-    """Whether a `plugin marketplace list --json` row is our directory marketplace in paths.data_dir().
+    """Whether a `plugin marketplace list --json` row is our directory marketplace in paths.program_dir().
 
     A GitHub, git or URL source is never ours, and neither is a directory elsewhere (a developer's checkout).
     A directory row that names no path at all counts as ours, so that an upgrade keeps updating the plugin
@@ -61,8 +61,8 @@ def _is_local_marketplace(row: dict) -> bool:
     if isinstance(source, dict):  # {"source": "directory", "path": ...}, as in known_marketplaces.json
         places.append(source.get("path"))
     places = [place for place in places if isinstance(place, str) and place]
-    data_dir = str(paths.data_dir())
-    return not places or any(_same_path(place, data_dir) for place in places)
+    program_dir = str(paths.program_dir())
+    return not places or any(_same_path(place, program_dir) for place in places)
 
 
 class ClaudePlugin(Setting):
@@ -79,8 +79,8 @@ class ClaudePlugin(Setting):
     @property
     def fix_hint(self) -> str:
         if not shutil.which("claude"):
-            return "install Claude Code, then run: ~/.local/bin/agent-resurrect install"
-        return "run: ~/.local/bin/agent-resurrect install"
+            return f"install Claude Code, then run: {paths.command()} install"
+        return f"run: {paths.command()} install"
 
     def _claude(self, *args: str) -> subprocess.CompletedProcess:
         executable = shutil.which("claude")
@@ -153,7 +153,7 @@ class ClaudePlugin(Setting):
             return None
         marketplace_existed = marketplace is not None
         if not marketplace_existed:  # one of the same name (ours, or GitHub's) is used as it is
-            self._require("plugin", "marketplace", "add", str(paths.data_dir()), "--scope", SCOPE)
+            self._require("plugin", "marketplace", "add", str(paths.program_dir()), "--scope", SCOPE)
         try:
             self._require("plugin", "install", PLUGIN_ID, "--scope", SCOPE)
         except Exception:

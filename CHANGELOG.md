@@ -4,6 +4,18 @@ All notable changes to agent-resurrect are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
+### Added
+- Homebrew: `brew install imgovind/tap/agent-resurrect`, then `agent-resurrect install`. The second command makes the same changes as the one-line installer (iTerm2 settings, the shell block, the Claude Code plugin), pointed at Homebrew's copy at a path that survives `brew upgrade`. Run `agent-resurrect uninstall` before `brew uninstall agent-resurrect`.
+
+### Changed
+- Only one copy of agent-resurrect is installed at a time. The install manifest now records which copy the shell block and the plugin point at, and `agent-resurrect install` from the other copy stops with the command that switches over (uninstall the first; your records and configuration are kept). A copy whose files are gone is simply replaced.
+
+### Upgrading from 0.2
+- Nothing changes for the one-line installer: run the install line again as before. The shell block it writes is the same, byte for byte.
+- To move to Homebrew: `~/.local/bin/agent-resurrect uninstall`, then `brew install imgovind/tap/agent-resurrect` and `agent-resurrect install`.
+
 ## [0.2.1] - 2026-10-13
 
 ### Added
@@ -97,7 +109,8 @@ First release. Supports Claude Code in iTerm2 on macOS.
 - Installer settings, each with an exact revert: macOS keeps windows on quit, iTerm2 restores windows at launch, iTerm2 opens at login (LaunchAgent), the shell rc block, and the Claude Code plugin. Original values are saved in a manifest before anything changes, and `agent-resurrect uninstall` restores every one.
 - Adapter interfaces for agents and terminals, so other agents and terminals can be added later.
 
-[Unreleased]: https://github.com/imgovind/agent-resurrect/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/imgovind/agent-resurrect/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.3.0
 [0.2.1]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.2.1
 [0.2.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.2.0
 [0.1.0]: https://github.com/imgovind/agent-resurrect/releases/tag/v0.1.0

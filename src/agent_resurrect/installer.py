@@ -1,8 +1,13 @@
 """Apply and revert settings in order, and keep the install manifest that makes uninstall exact.
 
-Manifest: {"version": 1, "installed_at": iso, "settings": {id: {"status": "changed" | "unchanged",
-"original": dict | None}}}. A setting recorded as "changed" keeps its first original forever, so a reinstall
-or upgrade never replaces the true original with an already-changed value.
+Manifest: {"version": 1, "installed_at": iso, "home": path, "command": str, "settings": {id: {"status":
+"changed" | "unchanged", "original": dict | None}}}. A setting recorded as "changed" keeps its first original
+forever, so a reinstall or upgrade never replaces the true original with an already-changed value. "home" is the
+program tree the install points the shell and the plugin at (paths.program_dir()) and "command" the command that
+uninstalls it; a manifest from before 0.3 has neither and means the one-line installer's copy.
+
+Only one copy is installed at a time: install refuses while a manifest names another program tree that still
+exists (the one-line installer's copy and Homebrew's, say), and says how to switch.
 
 A manifest that exists but cannot be used (unreadable, not JSON, an unknown format, or written by a newer
 agent-resurrect) may hold the only copy of the user's original values, so install and uninstall then refuse:
@@ -42,7 +47,7 @@ STATUSES = (CHANGED, UNCHANGED, SKIPPED, FAILED, REVERTED, WOULD_CHANGE, WOULD_R
 
 MANIFEST_STEP = "manifest"  # the step id when the manifest cannot be used
 FILES_STEP = "files"        # uninstall's last step: the launcher, the code and the manifest
-LAUNCHER = "~/.local/bin/agent-resurrect"
+LOCATION_STEP = "location"  # install's first step when another copy of agent-resurrect is the installed one
 
 
 @dataclass
@@ -175,15 +180,46 @@ def _migrate_legacy(manifest: dict, settings: List[Setting], dry_run: bool) -> L
     return results
 
 
+def _same_dir(a: Path, b: Path) -> bool:
+    return os.path.realpath(str(a)) == os.path.realpath(str(b))
+
+
+def _location_refusal(manifest: dict) -> Optional[StepResult]:
+    """A failed step when this copy cannot be installed: its program tree is not one, or another copy that
+    still exists is the installed one (the shell block and the plugin point there). None when install may go on."""
+    description = "Check which copy of agent-resurrect is installed"
+    home = paths.program_dir()
+    if paths.package_home() is not None and not ((home / "shell").is_dir() and (home / ".claude-plugin").is_dir()):
+        return StepResult(LOCATION_STEP, FAILED, f"AGENT_RESURRECT_HOME={home} is not an agent-resurrect program "
+                          "directory (it has no shell/ and .claude-plugin/); reinstall the package", description)
+    if not manifest.get("settings") and not manifest.get("installed_at"):
+        return None  # nothing installed yet
+    recorded = Path(manifest.get("home") or paths.data_dir())
+    if _same_dir(recorded, home) or not recorded.is_dir():
+        return None  # the same copy (an upgrade or repair), or the old one is gone: this copy takes over
+    old = manifest.get("command") or "~/.local/bin/agent-resurrect"
+    where = "the one-line installer" if _same_dir(recorded, paths.data_dir()) else str(recorded)
+    return StepResult(LOCATION_STEP, FAILED, f"agent-resurrect is already installed from {where}. To switch to this "
+                      f"copy, first run: {old} uninstall (it keeps your records and configuration), then run this "
+                      "install again", description)
+
+
 def install(settings: Optional[List[Setting]] = None, dry_run: bool = False) -> List[StepResult]:
     settings = all_settings() if settings is None else settings
     manifest, refusal = _manifest_or_refusal("install", dry_run)
     if refusal:
         return refusal
+    location = _location_refusal(manifest)
+    if location is not None:
+        if not dry_run:
+            log(f"refusing to install: {location.detail}")
+        return [location]
     results = _migrate_legacy(manifest, settings, dry_run)
     if dry_run:
         return results + [_preview_install(setting) for setting in settings]
     manifest["installed_at"] = manifest.get("installed_at") or utc_now_iso()
+    manifest["home"] = str(paths.program_dir())
+    manifest["command"] = paths.command()
     for setting in settings:
         results.append(_install_one(setting, manifest["settings"]))
         _save_manifest(manifest)
@@ -261,20 +297,27 @@ def _files_step(purge: bool, failed: bool, dry_run: bool) -> StepResult:
         # Without the launcher and the manifest entries the user could not retry, and a plugin left installed
         # would fail silently from then on.
         return StepResult(FILES_STEP, SKIPPED, "kept the launcher, the program files and the manifest so that "
-                          f"uninstall can be retried; fix the failed step, then run: {LAUNCHER} uninstall",
+                          f"uninstall can be retried; fix the failed step, then run: {paths.command()} uninstall",
                           description)
+    # A package manager owns its copy of the program: only it may remove that, so say how.
+    package = paths.package_manager()
+    then = ""
+    if package == "homebrew":
+        then = "; remove the program itself with: brew uninstall agent-resurrect"
+    elif package:
+        then = f"; remove the program itself with {package}"
     items = _removable(purge)
     if not items:
-        return StepResult(FILES_STEP, UNCHANGED, "nothing to remove", description)
+        return StepResult(FILES_STEP, UNCHANGED, "nothing to remove" + then, description)
     listed = ", ".join(str(item) for item in items)
     if dry_run:
-        return StepResult(FILES_STEP, WOULD_REVERT, listed, description)
+        return StepResult(FILES_STEP, WOULD_REVERT, listed + then, description)
     for item in items:
         if item.is_dir() and not item.is_symlink():
             shutil.rmtree(item)
         else:
             item.unlink()
-    return StepResult(FILES_STEP, REVERTED, listed, description)
+    return StepResult(FILES_STEP, REVERTED, listed + then, description)
 
 
 def _uninstall_one(setting: Setting, manifest: dict, dry_run: bool) -> StepResult:

@@ -10,6 +10,7 @@ The README and the code are the source of truth for behaviour. `docs/specs/` rec
 
 ## Layout
 
+- Homebrew (tap `imgovind/homebrew-tap`) installs the tree into its `libexec` and a wrapper that sets `AGENT_RESURRECT_HOME`, `AGENT_RESURRECT_BIN` and `AGENT_RESURRECT_PACKAGE`; `paths.program_dir()`, `launcher()` and `command()` follow them, and the manifest's `home` says which copy is installed (`tests/test_package_layout.py`).
 - `install.sh`: thin bash bootstrap. Copies the tree to `~/.local/share/agent-resurrect`, writes the launcher `~/.local/bin/agent-resurrect`, then runs `agent-resurrect install --yes` and `doctor`. `--dry-run` stages to a temporary folder and runs `install --dry-run`.
 - `bin/agent-resurrect`: POSIX sh wrapper. Finds a Python 3.9+ and runs `libexec/agent-resurrect.py` with `-I` (and `-B` for a `--dry-run`, which must write nothing under HOME). It is on Claude Code's PATH while the plugin is enabled.
 - `libexec/agent-resurrect.py`: the Python entry point. It finds `src/` relative to itself.

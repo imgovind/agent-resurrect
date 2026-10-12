@@ -157,10 +157,13 @@ def _check_launcher(ctx: _Context) -> None:
     elif ctx.launcher.exists():
         ctx.add(Result("launcher.on_path", WARN, f"{ctx.launcher} is not on PATH",
                        _person(NEW_SHELL, "open a new terminal tab; the installer added ~/.local/bin to PATH "
-                                          "in your shell rc file")))
+                                          "in your shell rc file" if paths.package_home() is None else
+                                          "open a new terminal tab; your package manager's bin directory must "
+                                          "be on PATH")))
     else:
-        ctx.add(Result("launcher.on_path", WARN, f"{ctx.launcher} is missing",
-                       _person(USER_ACTION, "reinstall agent-resurrect with install.sh (see the README)")))
+        reinstall = ("reinstall agent-resurrect with install.sh (see the README)"
+                     if paths.package_manager() != "homebrew" else "reinstall it: brew reinstall agent-resurrect")
+        ctx.add(Result("launcher.on_path", WARN, f"{ctx.launcher} is missing", _person(USER_ACTION, reinstall)))
 
 
 def login_shell(env: Mapping[str, str]) -> Optional[str]:
@@ -483,7 +486,7 @@ def run(out: Optional[TextIO] = None, *, procs: Optional[Procs] = None, boot_tim
     procs = procs or Procs()
     if boot_time is None:
         boot_time = read_boot_time()
-    ctx = _Context(launcher=paths.bin_dir() / "agent-resurrect", procs=procs, env=os.environ,
+    ctx = _Context(launcher=paths.launcher(), procs=procs, env=os.environ,
                    boot=datetime.fromtimestamp(boot_time, timezone.utc) if boot_time is not None else None)
     ctx.login_shell = login_shell(ctx.env)
 
