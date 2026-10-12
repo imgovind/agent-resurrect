@@ -1,4 +1,4 @@
-"""iTerm2 settings: restore windows at launch, and open iTerm2 at login."""
+"""iTerm2 settings: keep windows when quitting, restore them at launch, and open iTerm2 at login."""
 import os
 import plistlib
 import subprocess
@@ -15,7 +15,75 @@ LABEL = "io.github.imgovind.agent-resurrect.iterm"
 _TIMEOUT = 30
 
 
-class ITermRestorePolicy(BoolDefaultsSetting):
+def iterm_app() -> Path:
+    """iTerm.app in /Applications, else in ~/Applications (a non-admin install or `brew --appdir`).
+    AGENT_RESURRECT_ITERM_APP overrides both (tests)."""
+    override = os.environ.get("AGENT_RESURRECT_ITERM_APP")
+    if override:
+        return Path(override)
+    system = Path("/Applications/iTerm.app")
+    if system.exists():
+        return system
+    user = paths.home() / "Applications" / "iTerm.app"
+    return user if user.exists() else system
+
+
+_INSTALL_ITERM = "install iTerm2 from https://iterm2.com, then run: ~/.local/bin/agent-resurrect install"
+
+
+class _NeedsITerm:
+    """Mixin for settings that only make sense with iTerm2 installed; listed before the Setting base class.
+    Without iTerm2, install skips the setting and doctor's fix is to install iTerm2, never to rerun install."""
+
+    skip_detail = "iTerm2 is not installed"
+    _fix_hint = "run: ~/.local/bin/agent-resurrect install"
+
+    def applicable(self) -> bool:
+        return iterm_app().exists()
+
+    @property
+    def fix_hint(self) -> str:
+        return self._fix_hint if self.applicable() else _INSTALL_ITERM
+
+    def check(self) -> Check:
+        if not self.applicable():
+            return Check(False, self.skip_detail)
+        return super().check()
+
+    def apply(self) -> Optional[dict]:
+        if not self.applicable():
+            return None
+        return super().apply()
+
+
+class ITermKeepWindows(_NeedsITerm, BoolDefaultsSetting):
+    """iTerm2 keeps its windows when it quits: NSQuitAlwaysKeepsWindows = true in iTerm2's own defaults domain.
+
+    iTerm2 saves its window state only when this reads true. Verified against gnachman/iTerm2 master 3d5cb58
+    (2026-10-12):
+    - sources/StateRestoration/iTermRestorableStateController.m:60-69: +stateRestorationEnabled returns
+      [[iTermUserDefaults userDefaults] boolForKey:@"NSQuitAlwaysKeepsWindows"] || shouldRestoreStateOnNextLaunch,
+      and applicationWillTerminate erases the saved state when it is false.
+    - sources/Settings/iTermUserDefaults.m:99-107: +userDefaults is [NSUserDefaults standardUserDefaults] unless
+      a custom suite was set, which only the `-suite <name>` launch argument does (sources/AppKit/main.m:52-55).
+    standardUserDefaults searches the application's own domain (com.googlecode.iterm2) before NSGlobalDomain
+    (Apple, NSUserDefaults "Search order": argument, application, global, languages, registration), so this
+    value applies to iTerm2 alone and every other app keeps the user's macOS-wide "Close windows when quitting
+    an application" choice. AppKit resolves the key for an app through the same search list, which is why
+    `defaults write <bundle id> NSQuitAlwaysKeepsWindows` is the usual per-app override.
+
+    The key is written in iTerm2's domain even when the global value is already true, so the user can turn the
+    macOS-wide setting back on without stopping iTerm2's restore: here an absent key counts as false.
+    agent-resurrect 0.1 wrote the global key instead; see macos.LegacyKeepWindowsOnQuit.
+    """
+
+    id = "iterm.keep_windows"
+    description = "iTerm2 keeps its windows when it quits (NSQuitAlwaysKeepsWindows in iTerm2's settings only)"
+    ok_detail = "iTerm2 keeps its windows when it quits"
+    keys = [BoolKey(ITERM_DOMAIN, "NSQuitAlwaysKeepsWindows", want=True, default=False)]
+
+
+class ITermRestorePolicy(_NeedsITerm, BoolDefaultsSetting):
     """iTerm2 Settings > General > Startup > Window restoration policy = "Use System Window Restoration Setting".
 
     Verified against gnachman/iTerm2 master 3d5cb58 (2026-10-12):
@@ -24,7 +92,7 @@ class ITermRestorePolicy(BoolDefaultsSetting):
       sets OpenArrangementAtStartup = YES; "Don't Open Any Windows" sets OpenNoWindowsAtStartup = YES.
     - sources/TerminalView/PseudoTerminalRestorer.m: either key being YES aborts window restoration.
     - sources/iTermController/iTermController.m willRestoreWindowsAtNextLaunch: both NO plus
-      stateRestorationEnabled (NSQuitAlwaysKeepsWindows, see macos.KeepWindowsOnQuit).
+      stateRestorationEnabled (NSQuitAlwaysKeepsWindows, see ITermKeepWindows).
     - sources/Settings/iTermPreferences.m: both keys default to NO, so an absent key is already correct.
     NoSyncIgnoreSystemWindowRestoration is deliberately not touched: iTerm2 rewrites it itself at launch,
     on resign-active and at terminate to mirror its useRestorableStateController advanced setting
@@ -33,15 +101,11 @@ class ITermRestorePolicy(BoolDefaultsSetting):
 
     id = "iterm.restore_policy"
     description = 'iTerm2 restores its windows at launch (Startup: "Use System Window Restoration Setting")'
-    fix_hint = ('run: ~/.local/bin/agent-resurrect install, or set iTerm2 Settings > General > Startup to '
-                '"Use System Window Restoration Setting"')
+    _fix_hint = ('run: ~/.local/bin/agent-resurrect install, or set iTerm2 Settings > General > Startup to '
+                 '"Use System Window Restoration Setting"')
     ok_detail = "iTerm2 restores its windows at launch"
     keys = [BoolKey(ITERM_DOMAIN, "OpenArrangementAtStartup", want=False, default=False),
             BoolKey(ITERM_DOMAIN, "OpenNoWindowsAtStartup", want=False, default=False)]
-
-
-def iterm_app() -> Path:
-    return Path(os.environ.get("AGENT_RESURRECT_ITERM_APP") or "/Applications/iTerm.app")
 
 
 def plist_path() -> Path:
@@ -66,7 +130,7 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL)
 
 
-class ITermLaunchAtLogin(Setting):
+class ITermLaunchAtLogin(_NeedsITerm, Setting):
     """A LaunchAgent that runs `open -a iTerm` at login. It needs no Automation permission, and if macOS
     reopens iTerm2 as well, `open -a` is harmless. Install only writes the plist; launchd loads it at the
     next login. Uninstall unloads it (if loaded) and deletes it."""
@@ -74,21 +138,15 @@ class ITermLaunchAtLogin(Setting):
     id = "iterm.launch_at_login"
     description = f"Open iTerm2 at login (LaunchAgent {LABEL})"
 
-    @property
-    def fix_hint(self) -> str:
-        if not iterm_app().exists():
-            return "install iTerm2 from https://iterm2.com, then run: ~/.local/bin/agent-resurrect install"
-        return "run: ~/.local/bin/agent-resurrect install"
-
     def check(self) -> Check:
-        if not iterm_app().exists():
-            return Check(False, "iTerm2 is not installed")
+        if not self.applicable():
+            return Check(False, self.skip_detail)
         if _read_plist(plist_path()) == desired_plist():
             return Check(True, "iTerm2 opens at login")
         return Check(False, f"iTerm2 does not open at login (no LaunchAgent {LABEL})")
 
     def apply(self) -> Optional[dict]:
-        if not iterm_app().exists():
+        if not self.applicable():
             return None
         path = plist_path()
         if _read_plist(path) == desired_plist():

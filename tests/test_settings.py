@@ -13,13 +13,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_resurrect import paths
-from agent_resurrect.settings import all_settings
+from agent_resurrect import installer, paths
+from agent_resurrect.settings import all_settings, legacy_settings
 from agent_resurrect.settings.base import Check, Setting
 from agent_resurrect.settings.claude_plugin import MARKETPLACE, PLUGIN_ID, ClaudePlugin
-from agent_resurrect.settings.iterm import LABEL, ITermLaunchAtLogin, ITermRestorePolicy
-from agent_resurrect.settings.macos import KeepWindowsOnQuit
-from agent_resurrect.settings.shellrc import BEGIN, END, ShellRcBlock
+from agent_resurrect.settings.iterm import LABEL, ITermKeepWindows, ITermLaunchAtLogin, ITermRestorePolicy, iterm_app
+from agent_resurrect.settings.macos import LegacyKeepWindowsOnQuit
+from agent_resurrect.settings.shellrc import BEGIN, END, ShellRcBlock, login_shell
 from agent_resurrect.terminals.base import TerminalAdapter
 from tests.helpers import temp_home
 
@@ -114,50 +114,111 @@ def make_marketplace() -> None:
     manifest = paths.data_dir() / ".claude-plugin" / "marketplace.json"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps({"name": "agent-resurrect", "owner": {"name": "imgovind"},
-                                    "plugins": [{"name": "agent-resurrect", "source": "./plugin"}]}))
+                                    "plugins": [{"name": "agent-resurrect", "source": "./"}]}))
 
 
 class DefaultsSettingTest(unittest.TestCase):
-    def test_keep_windows_apply_check_revert_absent_key(self):
+    def test_keep_windows_is_scoped_to_iterm(self):
         with fake_system() as fs:
-            setting = KeepWindowsOnQuit()
-            self.assertEqual(setting.id, "macos.keep_windows")
+            setting = ITermKeepWindows()
+            self.assertEqual(setting.id, "iterm.keep_windows")
+            self.assertTrue(setting.applicable())
             self.assertFalse(setting.check().ok)
             original = setting.apply()
-            self.assertEqual(original["keys"]["NSQuitAlwaysKeepsWindows"]["existed"], False)
-            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            self.assertEqual(original, {"keys": {"NSQuitAlwaysKeepsWindows": {
+                "domain": ITERM, "existed": False, "type": None, "value": None}}})
+            self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            self.assertNotIn(GLOBAL, fs.defaults())  # every other app keeps the user's macOS-wide choice
             self.assertTrue(setting.check().ok)
             setting.revert(original)
-            self.assertIsNone(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"))
+            self.assertEqual(fs.defaults(), {})
             self.assertFalse(setting.check().ok)
+            writes = [c for c in fs.calls("defaults") if c[0] in ("write", "delete")]
+            self.assertEqual(writes, [["write", ITERM, "NSQuitAlwaysKeepsWindows", "-bool", "TRUE"],
+                                      ["delete", ITERM, "NSQuitAlwaysKeepsWindows"]])
+
+    def test_keep_windows_does_not_rely_on_the_global_value(self):
+        # The user may turn the macOS-wide setting back on at any time; iTerm2's own value keeps it restoring.
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            setting = ITermKeepWindows()
+            self.assertFalse(setting.check().ok)
+            original = setting.apply()
+            self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            setting.revert(original)
+            self.assertIsNone(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"))
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
 
     def test_keep_windows_already_true_returns_none(self):
         with fake_system() as fs:
             for type_, value in (("boolean", "1"), ("integer", "1"), ("string", "YES")):
-                fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", type_, value)
-                self.assertIsNone(KeepWindowsOnQuit().apply())
-                self.assertTrue(KeepWindowsOnQuit().check().ok)
-                self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": type_, "value": value})
+                fs.set_default(ITERM, "NSQuitAlwaysKeepsWindows", type_, value)
+                self.assertIsNone(ITermKeepWindows().apply())
+                self.assertTrue(ITermKeepWindows().check().ok)
+                self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": type_, "value": value})
             self.assertEqual([c for c in fs.calls("defaults") if c[0] in ("write", "delete")], [])
 
     def test_keep_windows_revert_restores_false(self):
         with fake_system() as fs:
             for type_ in ("boolean", "integer"):
-                fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", type_, "0")
-                setting = KeepWindowsOnQuit()
+                fs.set_default(ITERM, "NSQuitAlwaysKeepsWindows", type_, "0")
+                setting = ITermKeepWindows()
                 original = setting.apply()
                 self.assertEqual(original["keys"]["NSQuitAlwaysKeepsWindows"],
-                                 {"domain": GLOBAL, "existed": True, "type": type_, "value": "0"})
-                self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+                                 {"domain": ITERM, "existed": True, "type": type_, "value": "0"})
+                self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
                 setting.revert(original)
-                self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": type_, "value": "0"})
+                self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": type_, "value": "0"})
 
     def test_keep_windows_refuses_a_value_it_could_not_restore(self):
         with fake_system() as fs:
-            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "array", "(\n)")
+            fs.set_default(ITERM, "NSQuitAlwaysKeepsWindows", "array", "(\n)")
             with self.assertRaises(RuntimeError):
-                KeepWindowsOnQuit().apply()
-            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "array", "value": "(\n)"})
+                ITermKeepWindows().apply()
+            self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": "array", "value": "(\n)"})
+
+    def test_iterm_settings_need_iterm(self):
+        with fake_system(iterm=False) as fs:
+            fs.set_default(ITERM, "OpenNoWindowsAtStartup", "boolean", "1")
+            fs.clear_calls()
+            for setting in (ITermKeepWindows(), ITermRestorePolicy(), ITermLaunchAtLogin()):
+                self.assertFalse(setting.applicable(), setting.id)
+                self.assertEqual(setting.skip_detail, "iTerm2 is not installed")
+                # Doctor's fix is to install iTerm2: rerunning install would only skip it again.
+                self.assertEqual(setting.check(), Check(False, "iTerm2 is not installed"))
+                self.assertTrue(setting.fix_hint.startswith("install iTerm2 from https://iterm2.com"), setting.id)
+                self.assertIsNone(setting.apply())
+            self.assertEqual([c for c in fs.calls("defaults") if c[0] in ("write", "delete")], [])
+            self.assertEqual([(r.id, r.status) for r in installer.install([ITermKeepWindows(), ITermRestorePolicy()])],
+                             [("iterm.keep_windows", "skipped"), ("iterm.restore_policy", "skipped")])
+        with fake_system(iterm=True):
+            for setting in (ITermKeepWindows(), ITermRestorePolicy(), ITermLaunchAtLogin()):
+                self.assertTrue(setting.applicable(), setting.id)
+                self.assertTrue(setting.fix_hint.startswith("run: ~/.local/bin/agent-resurrect install"), setting.id)
+
+    def test_iterm_found_in_the_users_applications_folder(self):
+        with temp_home() as home:
+            os.environ.pop("AGENT_RESURRECT_ITERM_APP", None)
+            if Path("/Applications/iTerm.app").exists():
+                self.assertEqual(iterm_app(), Path("/Applications/iTerm.app"))
+                return
+            self.assertFalse(iterm_app().exists())
+            (home / "Applications" / "iTerm.app").mkdir(parents=True)
+            self.assertEqual(iterm_app(), home / "Applications" / "iTerm.app")
+
+    def test_legacy_global_keep_windows_reverts_exactly(self):
+        with fake_system() as fs:
+            self.assertEqual([s.id for s in legacy_settings()], ["macos.keep_windows"])
+            legacy = LegacyKeepWindowsOnQuit()
+            self.assertEqual(legacy.id, "macos.keep_windows")
+            self.assertNotIn("macos.keep_windows", [s.id for s in all_settings()])  # never applied any more
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            legacy.revert({"keys": {"NSQuitAlwaysKeepsWindows": {"domain": GLOBAL, "existed": True,
+                                                                  "type": "integer", "value": "0"}}})
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "integer", "value": "0"})
+            legacy.revert({"keys": {"NSQuitAlwaysKeepsWindows": {"domain": GLOBAL, "existed": False,
+                                                                  "type": None, "value": None}}})
+            self.assertIsNone(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"))
 
     def test_iterm_restore_policy(self):
         with fake_system() as fs:
@@ -263,7 +324,8 @@ class ShellRcSettingTest(unittest.TestCase):
             self.assertEqual(lines[-1], END)
             self.assertEqual(BEGIN, "# >>> agent-resurrect >>>")
             self.assertEqual(END, "# <<< agent-resurrect <<<")
-            self.assertIn('case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac',
+            # Appended, not prepended: ~/.local/bin must never shadow the user's pyenv, Homebrew or uv tools.
+            self.assertIn('case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac',
                           lines)
             self.assertIn('[ -f "$HOME/.local/share/agent-resurrect/shell/agent-resurrect.zsh" ] && '
                           '. "$HOME/.local/share/agent-resurrect/shell/agent-resurrect.zsh"', lines)
@@ -316,7 +378,9 @@ class ShellRcSettingTest(unittest.TestCase):
 
     def test_rc_created_then_removed_when_absent(self):
         with temp_home() as home:
+            os.environ["SHELL"] = "/bin/zsh"
             setting = ShellRcBlock("zsh")
+            self.assertTrue(setting.applicable())
             original = setting.apply()
             self.assertEqual(original["existed"], False)
             self.assertEqual((home / ".zshrc").read_text(), setting.block())
@@ -331,6 +395,64 @@ class ShellRcSettingTest(unittest.TestCase):
             self.assertFalse((home / ".zshrc").exists())
             setting.revert(original)
             self.assertFalse((zdot / ".zshrc").exists())
+
+    def test_zshrc_not_created_when_the_login_shell_is_not_zsh(self):
+        for shell in ("/opt/homebrew/bin/fish", "/bin/bash", "/usr/local/bin/nu"):
+            with self.subTest(shell), temp_home() as home:
+                os.environ["SHELL"] = shell
+                self.assertEqual(login_shell(), os.path.basename(shell))
+                setting = ShellRcBlock("zsh")
+                self.assertFalse(setting.applicable())
+                self.assertIn(f"zsh is not your login shell ({os.path.basename(shell)})", setting.skip_detail)
+                self.assertIsNone(setting.apply())
+                check = setting.check()
+                self.assertTrue(check.ok)  # nothing to load: doctor reports the login shell itself
+                self.assertIn("zsh not configured", check.detail)
+                self.assertEqual(list(home.iterdir()), [])
+                self.assertEqual([(r.id, r.status) for r in installer.install([setting])], [("shell.zsh", "skipped")])
+                self.assertFalse((home / ".zshrc").exists())
+
+    def test_existing_zshrc_gets_the_block_whatever_the_login_shell(self):
+        with temp_home() as home:
+            os.environ["SHELL"] = "/opt/homebrew/bin/fish"
+            rc = home / ".zshrc"
+            rc.write_text("export A=1\n")
+            setting = ShellRcBlock("zsh")
+            self.assertTrue(setting.applicable())
+            original = setting.apply()
+            self.assertIn(BEGIN, rc.read_text())
+            setting.revert(original)
+            self.assertEqual(rc.read_text(), "export A=1\n")
+
+    def test_login_shell_falls_back_to_the_account(self):
+        with temp_home():
+            os.environ.pop("SHELL", None)
+            with mock.patch("pwd.getpwuid") as getpwuid:
+                getpwuid.return_value.pw_shell = "/bin/zsh"
+                self.assertEqual(login_shell(), "zsh")
+                getpwuid.side_effect = KeyError("no such user")
+                self.assertEqual(login_shell(), "")
+                # Unknown: assume macOS's default shell, zsh.
+                self.assertTrue(ShellRcBlock("zsh").applicable())
+
+    def test_v01_block_that_prepended_path_is_upgraded_in_place(self):
+        with temp_home() as home:
+            os.environ["SHELL"] = "/bin/zsh"
+            rc = home / ".zshrc"
+            rc.write_bytes(b"export A=1")
+            setting = ShellRcBlock("zsh")
+            v01 = setting.block().replace('export PATH="$PATH:$HOME/.local/bin"',
+                                          'export PATH="$HOME/.local/bin:$PATH"')
+            self.assertNotEqual(v01, setting.block())
+            rc.write_bytes(b"export A=1\n" + v01.encode() + b"export B=2\n")
+            original = {"existed": True, "path": str(rc), "added_newline": True}  # what 0.1 recorded
+            self.assertFalse(setting.check().ok)
+            self.assertIn("outdated", setting.check().detail)
+            self.assertIsNone(setting.apply())  # the manifest keeps 0.1's original
+            self.assertEqual(rc.read_bytes(), b"export A=1\n" + setting.block().encode() + b"export B=2\n")
+            self.assertTrue(setting.check().ok)
+            setting.revert(original)
+            self.assertEqual(rc.read_bytes(), b"export A=1\nexport B=2\n")
 
     def test_rc_outdated_block_replaced_in_place(self):
         with temp_home() as home:
@@ -368,6 +490,8 @@ class ShellRcSettingTest(unittest.TestCase):
         with temp_home() as home:
             setting = ShellRcBlock("bash")
             self.assertEqual(setting.id, "shell.bash")
+            self.assertFalse(setting.applicable())
+            self.assertEqual(setting.skip_detail, "bash not configured (no ~/.bash_profile or ~/.bashrc)")
             self.assertIsNone(setting.apply())
             check = setting.check()
             self.assertTrue(check.ok)
@@ -470,9 +594,98 @@ class ClaudePluginSettingTest(unittest.TestCase):
             self.assertFalse(fs.claude_db()["plugins"][PLUGIN_ID]["enabled"])
             self.assertIn(MARKETPLACE, fs.claude_db()["marketplaces"])
 
+    def seed_claude(self, fs, marketplaces=None, plugins=None):
+        Path(os.environ["FAKE_CLAUDE_DB"]).write_text(json.dumps({"marketplaces": marketplaces or {},
+                                                                   "plugins": plugins or {}}))
+
+    GITHUB = {MARKETPLACE: {"source": "github", "repo": "imgovind/agent-resurrect", "plugins": ["agent-resurrect"]}}
+
+    def test_an_existing_marketplace_of_the_same_name_is_used_not_added_again(self):
+        # /plugin marketplace add imgovind/agent-resurrect declares the same marketplace name from GitHub.
+        with fake_system() as fs:
+            make_marketplace()
+            self.seed_claude(fs, marketplaces=self.GITHUB)
+            setting = ClaudePlugin()
+            self.assertTrue(setting.applicable())
+            original = setting.apply()
+            self.assertEqual(original, {"installed": False, "marketplace_existed": True})
+            self.assertEqual(fs.claude_changes(), [["plugin", "install", PLUGIN_ID, "--scope", "user"]])
+            self.assertTrue(setting.check().ok)
+            fs.clear_calls()
+            setting.revert(original)
+            self.assertEqual(fs.claude_changes(), [["plugin", "uninstall", PLUGIN_ID, "--scope", "user"]])
+            self.assertEqual(fs.claude_db()["marketplaces"], self.GITHUB)
+
+    def test_plugin_installed_from_github_is_left_alone(self):
+        for enabled, status in ((True, "unchanged"), (False, "skipped")):
+            with self.subTest(enabled=enabled), fake_system() as fs:
+                make_marketplace()
+                plugins = {PLUGIN_ID: {"scope": "user", "enabled": enabled, "version": "0.2.0"}}
+                self.seed_claude(fs, marketplaces=self.GITHUB, plugins=plugins)
+                setting = ClaudePlugin()
+                self.assertEqual(setting.check().ok, enabled)
+                self.assertIsNone(setting.apply())
+                results = installer.install([setting])
+                self.assertEqual([(r.id, r.status) for r in results], [("claude.plugin", status)])
+                self.assertEqual(fs.claude_changes(), [])
+                self.assertEqual(fs.claude_db()["plugins"], plugins)
+                # Recorded as unchanged (or not at all), so uninstall never removes the user's own install.
+                expected = {"status": "unchanged", "original": None} if enabled else None
+                self.assertEqual(installer.load_manifest()["settings"].get("claude.plugin"), expected)
+                installer.uninstall([setting])
+                self.assertEqual(fs.claude_db()["plugins"], plugins)
+
+    def test_plugin_installed_another_way_is_left_alone(self):
+        local = {"source": "directory", "plugins": ["agent-resurrect"]}
+        cases = {
+            "project scope": {PLUGIN_ID: {"scope": "project", "enabled": True, "version": "0.2.0"}},
+            "local scope": {PLUGIN_ID: {"scope": "local", "enabled": True, "version": "0.2.0"}},
+            "other marketplace": {"agent-resurrect@claude-plugins-official":
+                                  {"scope": "user", "enabled": True, "version": "0.2.0"}},
+        }
+        for name, plugins in cases.items():
+            with self.subTest(name), fake_system() as fs:
+                make_marketplace()
+                self.seed_claude(fs, marketplaces={MARKETPLACE: dict(local, path=str(paths.data_dir()))},
+                                 plugins=plugins)
+                setting = ClaudePlugin()
+                self.assertTrue(setting.check().ok)
+                self.assertIsNone(setting.apply())
+                self.assertEqual(fs.claude_changes(), [])
+                self.assertEqual(fs.claude_db()["plugins"], plugins)
+
+    def test_plugin_from_another_directory_marketplace_is_left_alone(self):
+        # For example a developer's checkout added with /plugin marketplace add ~/src/agent-resurrect.
+        with fake_system() as fs:
+            make_marketplace()
+            plugins = {PLUGIN_ID: {"scope": "user", "enabled": True, "version": "0.2.0"}}
+            self.seed_claude(fs, marketplaces={MARKETPLACE: {"source": "directory", "path": "/src/agent-resurrect",
+                                                             "plugins": ["agent-resurrect"]}}, plugins=plugins)
+            self.assertIsNone(ClaudePlugin().apply())
+            self.assertEqual(fs.claude_changes(), [])
+
+    def test_marketplace_row_shapes(self):
+        from agent_resurrect.settings.claude_plugin import _is_local_marketplace
+        with temp_home():
+            data = str(paths.data_dir())
+            self.assertTrue(_is_local_marketplace({"name": MARKETPLACE, "source": "directory", "path": data}))
+            self.assertTrue(_is_local_marketplace({"name": MARKETPLACE, "source": "directory",
+                                                   "installLocation": data}))
+            self.assertTrue(_is_local_marketplace({"name": MARKETPLACE, "source": {"source": "directory", "path": data},
+                                                   "installLocation": data}))
+            self.assertTrue(_is_local_marketplace({"name": MARKETPLACE, "source": "directory"}))  # no path given
+            self.assertTrue(_is_local_marketplace({"name": MARKETPLACE}))
+            self.assertFalse(_is_local_marketplace({"name": MARKETPLACE, "source": "github",
+                                                    "repo": "imgovind/agent-resurrect"}))
+            self.assertFalse(_is_local_marketplace({"name": MARKETPLACE, "source": {"source": "github", "repo": "x/y"},
+                                                    "installLocation": data}))
+            self.assertFalse(_is_local_marketplace({"name": MARKETPLACE, "source": "directory", "path": "/elsewhere"}))
+
     def test_claude_plugin_without_claude_is_skipped(self):
         with fake_system(claude=False) as fs:
             setting = ClaudePlugin()
+            self.assertFalse(setting.applicable())
+            self.assertEqual(setting.skip_detail, "Claude Code (claude) is not on PATH")
             self.assertIsNone(setting.apply())
             check = setting.check()
             self.assertFalse(check.ok)
@@ -512,16 +725,176 @@ class AllSettingsTest(unittest.TestCase):
 
         with mock.patch("agent_resurrect.terminals.all_terminals", return_value=[Term()]):
             ids = [s.id for s in all_settings()]
-        self.assertEqual(ids, ["macos.keep_windows", "t.one", "t.two", "shell.zsh", "shell.bash", "claude.plugin"])
+        self.assertEqual(ids, ["iterm.keep_windows", "t.one", "t.two", "shell.zsh", "shell.bash", "claude.plugin"])
 
     def test_descriptions_and_fix_hints_are_plain(self):
-        with fake_system():
-            settings = [KeepWindowsOnQuit(), ITermRestorePolicy(), ITermLaunchAtLogin(), ShellRcBlock("zsh"),
-                        ShellRcBlock("bash"), ClaudePlugin()]
+        with fake_system(iterm=False, claude=False):
+            settings = [ITermKeepWindows(), ITermRestorePolicy(), ITermLaunchAtLogin(), ShellRcBlock("zsh"),
+                        ShellRcBlock("bash"), ClaudePlugin(), LegacyKeepWindowsOnQuit()]
             for setting in settings:
-                for text in (setting.description, setting.fix_hint):
+                for text in (setting.description, setting.fix_hint, setting.skip_detail):
                     self.assertTrue(text, setting.id)
                     self.assertNotIn("\u2014", text)
+                    self.assertNotIn("\n", text)
+
+
+class LegacyMigrationTest(unittest.TestCase):
+    """0.1 changed NSQuitAlwaysKeepsWindows for every app (manifest id macos.keep_windows). From 0.2 the key is
+    set for iTerm2 alone, and both install (the upgrade) and uninstall give the user back their global value."""
+
+    def legacy_manifest(self, status="changed", existed=True, type_="boolean", value="0"):
+        original = {"keys": {"NSQuitAlwaysKeepsWindows": {"domain": GLOBAL, "existed": existed,
+                                                           "type": type_ if existed else None,
+                                                           "value": value if existed else None}}}
+        paths.state_dir().mkdir(parents=True, exist_ok=True)
+        paths.manifest_path().write_text(json.dumps({
+            "version": 1, "installed_at": "2026-10-01T00:00:00Z",
+            "settings": {"macos.keep_windows": {"status": status,
+                                                "original": original if status == "changed" else None},
+                         "shell.zsh": {"status": "unchanged", "original": None}}}))
+
+    def test_install_migrates_the_global_change_to_iterm(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")  # what 0.1 wrote
+            self.legacy_manifest(existed=True, value="0")
+            settings = [ITermKeepWindows()]
+
+            before = (fs.defaults(), paths.manifest_path().read_text())
+            plan = installer.install(settings, dry_run=True)
+            self.assertEqual([(r.id, r.status) for r in plan],
+                             [("macos.keep_windows", "would-revert"), ("iterm.keep_windows", "would-change")])
+            self.assertIn("Close windows when quitting an application", plan[0].description)
+            self.assertEqual((fs.defaults(), paths.manifest_path().read_text()), before)
+
+            results = installer.install(settings)
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("macos.keep_windows", "reverted"), ("iterm.keep_windows", "changed")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "0"})
+            self.assertEqual(fs.get_default(ITERM, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            manifest = installer.load_manifest()
+            self.assertNotIn("macos.keep_windows", manifest["settings"])
+            self.assertEqual(manifest["settings"]["shell.zsh"], {"status": "unchanged", "original": None})
+            self.assertEqual(manifest["installed_at"], "2026-10-01T00:00:00Z")
+
+            # Done once: the next install has nothing to migrate, and uninstall reverts only iTerm2's value.
+            self.assertEqual([(r.id, r.status) for r in installer.install(settings)],
+                             [("iterm.keep_windows", "unchanged")])
+            installer.uninstall(settings)
+            self.assertEqual(fs.defaults(), {GLOBAL: {"NSQuitAlwaysKeepsWindows": {"type": "boolean", "value": "0"}}})
+
+    def test_install_migration_deletes_a_key_that_did_not_exist(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            self.legacy_manifest(existed=False)
+            installer.install([ITermKeepWindows()])
+            self.assertIsNone(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"))
+
+    def test_install_drops_an_unchanged_legacy_entry_silently(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")  # the user's own choice
+            self.legacy_manifest(status="unchanged")
+            results = installer.install([ITermKeepWindows()])
+            self.assertEqual([(r.id, r.status) for r in results], [("iterm.keep_windows", "changed")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            self.assertNotIn("macos.keep_windows", installer.load_manifest()["settings"])
+
+    def test_failed_migration_keeps_the_entry_and_install_continues(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            self.legacy_manifest()
+            with mock.patch.object(LegacyKeepWindowsOnQuit, "revert", side_effect=RuntimeError("defaults broke")):
+                results = installer.install([ITermKeepWindows()])
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("macos.keep_windows", "failed"), ("iterm.keep_windows", "changed")])
+            self.assertIn("defaults broke", results[0].detail)
+            self.assertIn("macos.keep_windows", installer.load_manifest()["settings"])
+            # A retry migrates it.
+            self.assertEqual([(r.id, r.status) for r in installer.install([ITermKeepWindows()])],
+                             [("macos.keep_windows", "reverted"), ("iterm.keep_windows", "unchanged")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "0"})
+
+    def test_uninstall_reverts_the_legacy_entry(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            self.legacy_manifest(existed=True, value="0")
+            settings = [ITermKeepWindows(), ShellRcBlock("zsh")]
+            plan = installer.uninstall(settings, dry_run=True)
+            self.assertEqual([(r.id, r.status) for r in plan],
+                             [("shell.zsh", "unchanged"), ("iterm.keep_windows", "skipped"),
+                              ("macos.keep_windows", "would-revert"), ("files", "would-revert")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+            results = installer.uninstall(settings)
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("shell.zsh", "unchanged"), ("iterm.keep_windows", "skipped"),
+                              ("macos.keep_windows", "reverted"), ("files", "reverted")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "0"})
+            self.assertFalse(paths.manifest_path().exists())
+
+    def test_uninstall_leaves_an_unchanged_legacy_value(self):
+        with fake_system() as fs:
+            fs.set_default(GLOBAL, "NSQuitAlwaysKeepsWindows", "boolean", "1")
+            self.legacy_manifest(status="unchanged")
+            results = installer.uninstall([ITermKeepWindows()])
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("iterm.keep_windows", "skipped"), ("macos.keep_windows", "unchanged"),
+                              ("files", "reverted")])
+            self.assertEqual(fs.get_default(GLOBAL, "NSQuitAlwaysKeepsWindows"), {"type": "boolean", "value": "1"})
+
+    def test_failed_legacy_revert_on_uninstall_keeps_the_entry(self):
+        with fake_system():
+            self.legacy_manifest()
+            with mock.patch.object(LegacyKeepWindowsOnQuit, "revert", side_effect=RuntimeError("nope")):
+                results = installer.uninstall([ITermKeepWindows()])
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("iterm.keep_windows", "skipped"), ("macos.keep_windows", "failed"),
+                              ("files", "skipped")])
+            self.assertEqual(set(installer.load_manifest()["settings"]), {"macos.keep_windows"})
+
+
+class FullInstallTest(unittest.TestCase):
+    """The real settings, in order, against the fakes: install, dry runs and uninstall leave no trace."""
+
+    def test_install_and_uninstall_round_trip(self):
+        with fake_system() as fs:
+            make_marketplace()
+            os.environ["SHELL"] = "/bin/zsh"
+            rc = fs.home / ".zshrc"
+            rc.write_text("export A=1\n")
+
+            plan = installer.install(dry_run=True)
+            self.assertEqual([(r.id, r.status) for r in plan],
+                             [("iterm.keep_windows", "would-change"), ("iterm.restore_policy", "unchanged"),
+                              ("iterm.launch_at_login", "would-change"), ("shell.zsh", "would-change"),
+                              ("shell.bash", "skipped"), ("claude.plugin", "would-change")])
+            self.assertEqual(fs.claude_changes(), [])
+            self.assertEqual([c for c in fs.calls("defaults") if c[0] in ("write", "delete")], [])
+            self.assertFalse(paths.state_dir().exists())
+
+            results = installer.install()
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("iterm.keep_windows", "changed"), ("iterm.restore_policy", "unchanged"),
+                              ("iterm.launch_at_login", "changed"), ("shell.zsh", "changed"),
+                              ("shell.bash", "skipped"), ("claude.plugin", "changed")])
+            self.assertEqual([(r.id, r.status) for r in installer.install(dry_run=True)],
+                             [("iterm.keep_windows", "unchanged"), ("iterm.restore_policy", "unchanged"),
+                              ("iterm.launch_at_login", "unchanged"), ("shell.zsh", "unchanged"),
+                              ("shell.bash", "skipped"), ("claude.plugin", "unchanged")])
+
+            plan = installer.uninstall(dry_run=True)
+            self.assertEqual([(r.id, r.status) for r in plan],
+                             [("claude.plugin", "would-revert"), ("shell.bash", "skipped"),
+                              ("shell.zsh", "would-revert"), ("iterm.launch_at_login", "would-revert"),
+                              ("iterm.restore_policy", "unchanged"), ("iterm.keep_windows", "would-revert"),
+                              ("files", "would-revert")])
+            results = installer.uninstall()
+            self.assertEqual([(r.id, r.status) for r in results],
+                             [("claude.plugin", "reverted"), ("shell.bash", "skipped"), ("shell.zsh", "reverted"),
+                              ("iterm.launch_at_login", "reverted"), ("iterm.restore_policy", "unchanged"),
+                              ("iterm.keep_windows", "reverted"), ("files", "reverted")])
+            self.assertEqual(rc.read_text(), "export A=1\n")
+            self.assertEqual(fs.defaults(), {})
+            self.assertEqual(fs.claude_db(), {"marketplaces": {}, "plugins": {}})
+            self.assertFalse((fs.home / "Library" / "LaunchAgents" / f"{LABEL}.plist").exists())
 
 
 if __name__ == "__main__":

@@ -3,8 +3,12 @@
 It never touches the real Claude Code configuration.
 
 Each call is appended as a JSON line to $FAKE_CALLS_LOG. State lives in the JSON file named by $FAKE_CLAUDE_DB:
-    {"marketplaces": {name: {"source": "directory", "path": str, "plugins": [plugin names]}},
+    {"marketplaces": {name: {"source": "directory", "path": str, "plugins": [plugin names]}
+                            or {"source": "github", "repo": "owner/repo", "plugins": [plugin names]}},
      "plugins": {"<plugin>@<marketplace>": {"scope": str, "enabled": bool, "version": str}}}
+Tests seed GitHub marketplaces directly; `plugin marketplace add` only adds directories.
+Adding a directory marketplace whose name is already declared from another source fails, so a test notices
+any attempt to declare a second marketplace with the same name.
 `plugin list --json` and `plugin marketplace list --json` print the documented JSON shapes
 (https://code.claude.com/docs/en/plugins/cli-reference). If $FAKE_CLAUDE_FAIL is set and the joined
 arguments start with it (for example "plugin install"), that call fails with exit 1.
@@ -71,7 +75,10 @@ def marketplace(db, positional, options):
         except (OSError, ValueError):
             return fail("Invalid marketplace source format. Try: owner/repo, https://..., or ./path")
         name = data["name"]
-        if name in db["marketplaces"]:
+        existing = db["marketplaces"].get(name)
+        if existing is not None:
+            if existing.get("source") != "directory" or existing.get("path") != source:
+                return fail(f"fake claude: marketplace '{name}' is already declared from another source")
             print(f"Marketplace '{name}' already on disk, declared in user settings")
             return 0
         db["marketplaces"][name] = {"source": "directory", "path": source,
@@ -79,8 +86,14 @@ def marketplace(db, positional, options):
         print(f"Successfully added marketplace: {name} (declared in user settings)")
         return 0
     if action == "list":
-        rows = [{"name": n, "source": m["source"], "path": m["path"], "installLocation": m["path"]}
-                for n, m in sorted(db["marketplaces"].items())]
+        rows = []
+        for n, m in sorted(db["marketplaces"].items()):
+            row = {"name": n, "source": m["source"]}
+            if m.get("path"):
+                row.update(path=m["path"], installLocation=m["path"])
+            else:
+                row.update(repo=m.get("repo"), installLocation=f"/fake/plugins/marketplaces/{n}")
+            rows.append(row)
         print(json.dumps(rows) if options.get("json") else "\n".join(r["name"] for r in rows))
         return 0
     if action == "update" and len(positional) == 2:

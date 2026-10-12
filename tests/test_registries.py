@@ -23,14 +23,15 @@ class RegistryTest(unittest.TestCase):
 
     def test_terminals_registry_is_iterm(self):
         self.assertEqual([type(terminal) for terminal in all_terminals()], [ITermAdapter])
-        self.assertIsInstance(detect_terminal({"ITERM_SESSION_ID": PANE}), ITermAdapter)
+        iterm = {"TERM_PROGRAM": "iTerm.app"}  # required with the session id from 0.2 (tmux and friends unset)
+        self.assertIsInstance(detect_terminal(dict(iterm, ITERM_SESSION_ID=PANE)), ITermAdapter)
         self.assertIsNone(detect_terminal({}))
-        self.assertIsNone(detect_terminal({"ITERM_SESSION_ID": "w0t0p0:not-a-guid"}))
+        self.assertIsNone(detect_terminal(dict(iterm, ITERM_SESSION_ID="w0t0p0:not-a-guid")))
 
     def test_all_settings_ids_in_order(self):
         with temp_home():
             self.assertEqual([setting.id for setting in all_settings()],
-                             ["macos.keep_windows", "iterm.restore_policy", "iterm.launch_at_login",
+                             ["iterm.keep_windows", "iterm.restore_policy", "iterm.launch_at_login",
                               "shell.zsh", "shell.bash", "claude.plugin"])
 
     def test_iterm_adapter_settings(self):
