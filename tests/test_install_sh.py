@@ -198,8 +198,8 @@ class InstallShTest(unittest.TestCase):
         launcher = self.home / ".local" / "bin" / "agent-resurrect"
         before = tree(self.home)
         for argv in (["install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["--dry-run"]):
-            result = subprocess.run([str(launcher), *argv], env=self.env(), capture_output=True, text=True,
-                                    timeout=60)
+            result = subprocess.run([str(launcher), *argv], env=self.env(), stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=60)
             self.assert_ok(result)
             call = self.stub_calls()[-1]
             self.assertEqual(call["argv"], argv)
@@ -207,7 +207,8 @@ class InstallShTest(unittest.TestCase):
             self.assertTrue(call["no_bytecode"], argv)
             self.assertIsNone(call["pycache_prefix"], argv)
         self.assertEqual(tree(self.home), before)
-        subprocess.run([str(launcher), "find", "--dry-run-ish"], env=self.env(), check=True, timeout=60)
+        subprocess.run([str(launcher), "find", "--dry-run-ish"], env=self.env(), stdin=subprocess.DEVNULL, check=True,
+                       timeout=60)
         self.assertFalse(self.stub_calls()[-1]["no_bytecode"])  # only an exact --dry-run argument
 
     def test_install_sh_keeps_a_resurrect_that_is_not_ours(self):

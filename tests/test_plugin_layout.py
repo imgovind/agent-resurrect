@@ -265,7 +265,8 @@ class WrapperTest(unittest.TestCase):
     def test_without_home_runs_without_a_bytecode_cache(self):
         self.without_command_line_tools()
         env = {"PATH": os.pathsep.join([str(self.tools)] + SYSTEM_DIRS), "STUB_LOG": str(self.log)}
-        result = subprocess.run([str(self.wrapper), "version"], env=env, capture_output=True, timeout=60)
+        result = subprocess.run([str(self.wrapper), "version"], env=env, stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60)  # the stub reads stdin to EOF
         self.assert_ok(result)
         (call,) = self.calls()
         self.assertIsNone(call["pycache_prefix"])

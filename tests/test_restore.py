@@ -186,6 +186,12 @@ class RestoreSimulateTest(unittest.TestCase):
 
 
 class RestorePlanTest(unittest.TestCase):
+    def setUp(self):
+        # plan_resume logs the resume_env entries it drops: the log must go to a temporary HOME, never the real one.
+        home = temp_home()
+        home.__enter__()
+        self.addCleanup(home.__exit__, None, None, None)
+
     def test_plan_uses_cwd_or_warns(self):
         existing = tempfile.mkdtemp(prefix="ar-cwd-")
         self.addCleanup(shutil.rmtree, existing, True)
