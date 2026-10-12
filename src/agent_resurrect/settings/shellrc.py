@@ -4,6 +4,7 @@ The rc file is edited in place through its path and as bytes: a symlink (for exa
 stays a symlink, its target is edited, and every byte outside the block is left exactly as it was.
 """
 import os
+import pwd
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -35,6 +36,18 @@ def display_path(path: Path) -> str:
     home = str(paths.home()).rstrip("/")
     text = str(path)
     return "~" + text[len(home):] if home and text.startswith(home + "/") else text
+
+
+def login_shell() -> str:
+    """The name of the user's login shell ("zsh", "bash", "fish", ...): from $SHELL, else from the account
+    record. "" when neither is known."""
+    value = os.environ.get("SHELL") or ""
+    if not value:
+        try:
+            value = pwd.getpwuid(os.getuid()).pw_shell or ""
+        except (KeyError, OSError):
+            value = ""
+    return os.path.basename(value.rstrip("/"))
 
 
 def find_blocks(data: bytes) -> List[Tuple[int, int]]:
@@ -78,7 +91,11 @@ def _rewrite(path: Path, data: bytes) -> None:
 
 class ShellRcBlock(Setting):
     """The block in ~/.zshrc (honouring ZDOTDIR), or in ~/.bash_profile, else ~/.bashrc, for bash.
-    The original stored for revert() is {"existed": bool, "path": str, "added_newline": bool}."""
+    The original stored for revert() is {"existed": bool, "path": str, "added_newline": bool}.
+
+    It applies only where the shell will read it: bash needs one of its files to exist already, and a missing
+    .zshrc is created only when zsh is the login shell (or the login shell is unknown: zsh is macOS's default).
+    A fish or nushell user would otherwise get a .zshrc that nothing ever reads."""
 
     fix_hint = "run: ~/.local/bin/agent-resurrect install"
 
@@ -103,20 +120,39 @@ class ShellRcBlock(Setting):
                 return home / name
         return None
 
+    def applicable(self) -> bool:
+        target = self.target()
+        if target is None:
+            return False
+        if self.shell == "zsh" and not target.exists():
+            return login_shell() in ("zsh", "")
+        return True
+
+    @property
+    def skip_detail(self) -> str:
+        if self.shell == "bash":
+            return "bash not configured (no ~/.bash_profile or ~/.bashrc)"
+        return f"zsh is not your login shell ({login_shell()}) and there is no {display_path(self.target())}"
+
     def block(self) -> str:
         snippet = shell_path(paths.data_dir() / "shell" / f"agent-resurrect.{self.shell}")
         return "\n".join([
             BEGIN,
             "# Managed by agent-resurrect. Remove with: agent-resurrect uninstall",
-            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac',
+            # Appended, so ~/.local/bin never shadows the user's own pyenv, Homebrew or uv tools.
+            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac',
             f'[ -f "{snippet}" ] && . "{snippet}"',
             END,
         ]) + "\n"
 
     def check(self) -> Check:
         target = self.target()
-        if target is None:
-            return Check(True, "bash not configured (no ~/.bash_profile or ~/.bashrc)")
+        if not self.applicable():
+            # Nothing for this shell to load; doctor reports an unsupported login shell on its own.
+            if self.shell == "bash":
+                return Check(True, self.skip_detail)
+            return Check(True, f"zsh not configured ({display_path(target)} does not exist and the login shell "
+                               f"is {login_shell()})")
         data = target.read_bytes() if target.exists() else b""
         spans = find_blocks(data)
         where = display_path(target)
@@ -128,7 +164,7 @@ class ShellRcBlock(Setting):
 
     def apply(self) -> Optional[dict]:
         target = self.target()
-        if target is None:
+        if target is None or not self.applicable():
             return None
         existed = target.exists()
         data = target.read_bytes() if existed else b""

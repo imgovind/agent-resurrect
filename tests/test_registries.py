@@ -30,7 +30,7 @@ class RegistryTest(unittest.TestCase):
     def test_all_settings_ids_in_order(self):
         with temp_home():
             self.assertEqual([setting.id for setting in all_settings()],
-                             ["macos.keep_windows", "iterm.restore_policy", "iterm.launch_at_login",
+                             ["iterm.keep_windows", "iterm.restore_policy", "iterm.launch_at_login",
                               "shell.zsh", "shell.bash", "claude.plugin"])
 
     def test_iterm_adapter_settings(self):
