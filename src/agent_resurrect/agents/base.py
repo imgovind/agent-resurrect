@@ -46,3 +46,9 @@ class AgentAdapter(ABC):
     @abstractmethod
     def find_by_text(self, text: str, exclude: Optional[str] = None, limit: int = 5) -> List[Candidate]:
         """Sessions whose history contains the text, best match first."""
+
+    def adopt(self, ctx: HookContext) -> Optional[Record]:
+        """Record the agent session this process is running inside (a tool call of that session), for
+        sessions started before agent-resurrect was installed. Returns the saved record, or None when not
+        inside a recordable session. Default: unsupported."""
+        return None

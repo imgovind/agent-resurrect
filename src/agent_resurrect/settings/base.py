@@ -15,6 +15,11 @@ class Setting(ABC):
     description: str = ""  # one sentence for the install summary
     fix_hint: str = ""     # what doctor tells the user when check() fails
 
+    def applicable(self) -> bool:
+        """Can this setting be applied on this machine at all (e.g. iTerm2 or Claude Code installed)?
+        `install --dry-run` uses it to tell "would-change" from "skipped". Default: yes."""
+        return True
+
     @abstractmethod
     def check(self) -> Check:
         """Is the system in the desired state?"""

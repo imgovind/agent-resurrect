@@ -37,6 +37,9 @@ class Record:
     source: Optional[str] = None
     agent_pid: Optional[int] = None
     agent_started: Optional[str] = None
+    # Environment variables the agent needs again on resume, e.g. {"CLAUDE_CONFIG_DIR": "..."}. Added in
+    # 0.2.0 without a schema bump: older readers ignore unknown keys, newer readers default it to None.
+    resume_env: Optional[Dict[str, str]] = None
     status: str = STATUS_LIVE
     recorded_at: str = ""
     updated_at: str = ""

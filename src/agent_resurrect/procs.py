@@ -29,9 +29,17 @@ class ProcInfo:
         return "+" in self.stat
 
 
+def _ps_env() -> dict:
+    """`ps -o lstart` is localised (Japanese, French, ...), so records written under one locale could never
+    match the liveness check under another, and non-Latin output never parses. Always ask for the C locale."""
+    env = dict(os.environ)
+    env.update(LC_ALL="C", LANG="C")
+    return env
+
+
 def _run_ps(argv: List[str]) -> str:
     try:
-        result = subprocess.run(["ps", *argv], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(["ps", *argv], capture_output=True, text=True, timeout=5, env=_ps_env())
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return result.stdout if result.returncode == 0 else ""

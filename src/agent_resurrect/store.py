@@ -5,14 +5,24 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from . import logs, paths
-from .model import Record, parse_iso, utc_now_iso
+from .model import STATUS_CONSUMED, STATUS_LIVE, Record, parse_iso, utc_now_iso
 
 # Pane keys are derived from environment variables, so they are allow-listed: a key can never
 # name a path outside panes_dir(). Matched with fullmatch: "$" would also accept a trailing newline.
 PANE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def _private_dir(directory: Path) -> None:
+    """Create a state directory readable only by the user: records hold folder paths and session ids."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in {directory, paths.state_dir()}:
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
 
 
 def valid_pane_key(pane_key: str) -> bool:
@@ -43,7 +53,7 @@ def save(record: Record) -> Record:
     record.recorded_at = record.recorded_at or now
     record.updated_at = now
     path = record_path(record.pane_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _private_dir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")
     try:
         with os.fdopen(fd, "w") as fh:
@@ -84,23 +94,59 @@ def list_records() -> List[Record]:
     return records
 
 
-def gc(max_age_days: int, now: Optional[datetime] = None) -> List[str]:
+def gc(max_age_days: int, now: Optional[datetime] = None,
+       is_running: Optional[Callable[[Record], bool]] = None) -> List[str]:
     """Delete records not updated within max_age_days; return their pane keys.
-    A record whose timestamp cannot be parsed is kept (never deleted on a guess)."""
+    A record whose timestamp cannot be parsed is kept (never deleted on a guess), and so is any record
+    whose agent `is_running` (a session can run for weeks without a new SessionStart)."""
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=max_age_days)
     removed = []
     for record in list_records():
         updated = parse_iso(record.updated_at)
-        if updated is not None and updated < cutoff and delete(record.pane_key):
+        if updated is None or updated >= cutoff:
+            continue
+        if is_running is not None and is_running(record):
+            continue
+        if delete(record.pane_key):
             removed.append(record.pane_key)
     return removed
+
+
+def claim(pane_key: str) -> Optional[Record]:
+    """Atomically take a live record for restoring and mark it consumed; None if it is absent, not live,
+    or another process got there first. When several shells race on one record (tmux, duplicated panes),
+    exactly one wins: the record file is renamed to a per-process claim file, and rename is atomic.
+    The claim file has no .json suffix, so list_records() never sees it."""
+    path = record_path(pane_key)
+    claim_path = path.with_name(f".claim-{pane_key}-{os.getpid()}")
+    try:
+        os.rename(path, claim_path)
+    except FileNotFoundError:
+        return None
+    try:
+        with open(claim_path) as fh:
+            record = Record.from_dict(json.load(fh))
+        if record.status != STATUS_LIVE:
+            os.rename(claim_path, path)
+            return None
+        record.status = STATUS_CONSUMED
+        save(record)
+    except BaseException as exc:
+        if claim_path.exists():
+            os.replace(claim_path, path)  # put the record back exactly as it was
+        if isinstance(exc, (OSError, ValueError)):
+            logs.log(f"store: could not claim {pane_key!r}: {exc}")
+            return None
+        raise
+    os.unlink(claim_path)
+    return record
 
 
 def append_restore_event(pane_key: str, result: str, detail: str = "") -> None:
     """One JSON line per automatic-restore decision; doctor summarises these."""
     try:
         path = paths.restore_events_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _private_dir(path.parent)
         with open(path, "a") as fh:
             fh.write(json.dumps({"ts": utc_now_iso(), "pane_key": pane_key, "result": result, "detail": detail}) + "\n")
     except OSError as exc:

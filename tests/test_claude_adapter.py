@@ -284,7 +284,8 @@ class ClaudeSessionTest(unittest.TestCase):
         data = json.loads(store.record_path("fake-p1").read_text())
         self.assertEqual(sorted(data), sorted([
             "schema", "terminal", "pane_key", "pane_label", "agent", "session_id", "cwd", "transcript_path",
-            "permission_mode", "source", "agent_pid", "agent_started", "status", "recorded_at", "updated_at"]))
+            "permission_mode", "source", "agent_pid", "agent_started", "resume_env", "status", "recorded_at",
+            "updated_at"]))
 
 
 if __name__ == "__main__":
