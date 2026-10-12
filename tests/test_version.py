@@ -53,12 +53,6 @@ def versions() -> Dict[str, Optional[str]]:
 
 
 class VersionTest(unittest.TestCase):
-    # Expected to fail on the v0.2/docs branch only. That branch already describes 0.2.0 in CHANGELOG.md while the
-    # code still says 0.1.0, and the plugin manifest reaches .claude-plugin/plugin.json from the plugin branch. The
-    # integrator bumps every file to 0.2.0 in one commit and deletes this decorator in that same commit. Once the
-    # versions agree, this test passes, unittest reports an unexpected success, and the suite fails, so the
-    # decorator cannot be left behind by accident.
-    @unittest.expectedFailure
     def test_every_place_names_the_same_version(self):
         found = versions()
         self.assertEqual(found, {place: __version__ for place in found})

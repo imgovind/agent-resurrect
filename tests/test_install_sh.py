@@ -114,9 +114,9 @@ class InstallShTest(unittest.TestCase):
     def fake_download(self, clone: Path) -> Path:
         """A fake curl that serves `clone` as the release tarball and logs each URL it was asked for."""
         package = self.tmp / "package"
-        shutil.copytree(clone, package / "agent-resurrect-0.1.0", symlinks=True)
+        shutil.copytree(clone, package / f"agent-resurrect-{__version__}", symlinks=True)
         tarball = self.tmp / "release.tar.gz"
-        subprocess.run(["tar", "-czf", str(tarball), "-C", str(package), "agent-resurrect-0.1.0"], check=True)
+        subprocess.run(["tar", "-czf", str(tarball), "-C", str(package), f"agent-resurrect-{__version__}"], check=True)
         urls = self.state / "curl-urls"
         self.tool("curl", f'#!/bin/sh\nfor url; do :; done\necho "$url" >> "{urls}"\ncat "{tarball}"\n')
         return urls
@@ -240,7 +240,7 @@ class InstallShTest(unittest.TestCase):
         env["AGENT_RESURRECT_REF"] = "v9.9.9"
         self.assert_ok(self.pipe_sh(INSTALL_SH.read_text(), env=env))
         self.assertEqual(urls.read_text().splitlines(),
-                         ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0",
+                         [f"https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v{__version__}",
                           "https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v9.9.9"])
 
         self.tool("curl", "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n")
@@ -270,7 +270,7 @@ class InstallShTest(unittest.TestCase):
         result = self.pipe_sh(INSTALL_SH.read_text(), "--dry-run")
         self.assert_ok(result)
         self.assertEqual(urls.read_text().splitlines(),
-                         ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0"])
+                         [f"https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v{__version__}"])
         self.assertEqual([c["argv"] for c in self.stub_calls()], [["install", "--dry-run"]])
         self.assertEqual(tree(self.home), [])
         self.assertEqual(self.leftovers(), [])
@@ -390,7 +390,7 @@ class InstallShTest(unittest.TestCase):
         env["AGENT_RESURRECT_COMMIT"] = SHA  # ignored: the unpinned script downloads its release tag
         self.assert_ok(self.pipe_sh(INSTALL_SH.read_text(), env=env))
         self.assertEqual(urls.read_text().splitlines(),
-                         ["https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v0.1.0"])
+                         [f"https://codeload.github.com/imgovind/agent-resurrect/tar.gz/v{__version__}"])
 
     def test_a_malformed_commit_pin_is_refused(self):
         self.fake_download(self.make_clone())
