@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Fake `claude` CLI for tests, covering the `claude plugin` subcommands the installer uses.
+It never touches the real Claude Code configuration.
+
+Each call is appended as a JSON line to $FAKE_CALLS_LOG. State lives in the JSON file named by $FAKE_CLAUDE_DB:
+    {"marketplaces": {name: {"source": "directory", "path": str, "plugins": [plugin names]}},
+     "plugins": {"<plugin>@<marketplace>": {"scope": str, "enabled": bool, "version": str}}}
+`plugin list --json` and `plugin marketplace list --json` print the documented JSON shapes
+(https://code.claude.com/docs/en/plugins/cli-reference). If $FAKE_CLAUDE_FAIL is set and the joined
+arguments start with it (for example "plugin install"), that call fails with exit 1.
+"""
+import json
+import os
+import sys
+
+
+def log_call(argv):
+    path = os.environ.get("FAKE_CALLS_LOG")
+    if path:
+        with open(path, "a") as fh:
+            fh.write(json.dumps(["claude"] + argv) + "\n")
+
+
+def load(path):
+    try:
+        with open(path) as fh:
+            db = json.load(fh)
+    except FileNotFoundError:
+        db = {}
+    db.setdefault("marketplaces", {})
+    db.setdefault("plugins", {})
+    return db
+
+
+def save(path, db):
+    with open(path, "w") as fh:
+        json.dump(db, fh, indent=1, sort_keys=True)
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    return 1
+
+
+def split_options(args):
+    """Return (positional, options) where options maps --scope/-s to its value and flags to True."""
+    positional, options = [], {}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--scope", "-s"):
+            options["scope"] = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("-"):
+            options[arg.lstrip("-")] = True
+        else:
+            positional.append(arg)
+        i += 1
+    return positional, options
+
+
+def marketplace(db, positional, options):
+    action = positional[0] if positional else ""
+    if action == "add" and len(positional) == 2:
+        source = os.path.expanduser(positional[1])
+        manifest = os.path.join(source, ".claude-plugin", "marketplace.json")
+        try:
+            with open(manifest) as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return fail("Invalid marketplace source format. Try: owner/repo, https://..., or ./path")
+        name = data["name"]
+        if name in db["marketplaces"]:
+            print(f"Marketplace '{name}' already on disk, declared in user settings")
+            return 0
+        db["marketplaces"][name] = {"source": "directory", "path": source,
+                                    "plugins": [p["name"] for p in data.get("plugins", [])]}
+        print(f"Successfully added marketplace: {name} (declared in user settings)")
+        return 0
+    if action == "list":
+        rows = [{"name": n, "source": m["source"], "path": m["path"], "installLocation": m["path"]}
+                for n, m in sorted(db["marketplaces"].items())]
+        print(json.dumps(rows) if options.get("json") else "\n".join(r["name"] for r in rows))
+        return 0
+    if action == "update" and len(positional) == 2:
+        if positional[1] not in db["marketplaces"]:
+            return fail(f"Marketplace '{positional[1]}' not found")
+        print(f"Successfully updated marketplace: {positional[1]}")
+        return 0
+    if action in ("remove", "rm") and len(positional) == 2:
+        name = positional[1]
+        if name not in db["marketplaces"]:
+            return fail(f"Marketplace '{name}' not found")
+        del db["marketplaces"][name]
+        for plugin_id in [p for p in db["plugins"] if p.endswith("@" + name)]:
+            del db["plugins"][plugin_id]
+        print(f"Successfully removed marketplace: {name}")
+        return 0
+    return fail(f"fake claude: unsupported marketplace call {positional}")
+
+
+def plugin(db, positional, options):
+    sub = positional[0] if positional else ""
+    if sub == "marketplace":
+        return marketplace(db, positional[1:], options)
+    if sub == "list":
+        rows = [{"id": pid, "version": p["version"], "scope": p["scope"], "enabled": p["enabled"],
+                 "installPath": f"/fake/plugins/{pid}"} for pid, p in sorted(db["plugins"].items())]
+        print(json.dumps(rows) if options.get("json") else "\n".join(r["id"] for r in rows))
+        return 0
+    if len(positional) != 2:
+        return fail(f"fake claude: unsupported plugin call {positional}")
+    plugin_id = positional[1]
+    scope = options.get("scope", "user")
+    installed = db["plugins"].get(plugin_id)
+    if sub in ("install", "i"):
+        name, _, market = plugin_id.partition("@")
+        if name not in db["marketplaces"].get(market, {}).get("plugins", []):
+            return fail(f'Plugin "{plugin_id}" not found in any marketplace')
+        if installed and installed["scope"] == scope:
+            print(f'Plugin "{plugin_id}" is already installed (scope: {scope})')
+            return 0
+        db["plugins"][plugin_id] = {"scope": scope, "enabled": True, "version": "0.1.0"}
+        print(f"Successfully installed plugin: {plugin_id} (scope: {scope})")
+        return 0
+    if not installed or installed["scope"] != scope:
+        return fail(f'Plugin "{plugin_id}" is not installed at scope {scope}')
+    if sub == "update":
+        print(f"{plugin_id} is already at the latest version ({installed['version']}).")
+        return 0
+    if sub in ("uninstall", "remove", "rm"):
+        del db["plugins"][plugin_id]
+        print(f"Successfully uninstalled plugin: {plugin_id} (scope: {scope})")
+        return 0
+    if sub in ("enable", "disable"):
+        installed["enabled"] = sub == "enable"
+        print(f"Successfully {sub}d plugin: {plugin_id}")
+        return 0
+    return fail(f"fake claude: unsupported plugin call {positional}")
+
+
+def main(argv):
+    log_call(argv)
+    if argv[:1] == ["--version"]:
+        print("2.1.296 (Claude Code)")
+        return 0
+    forced = os.environ.get("FAKE_CLAUDE_FAIL")
+    if forced and " ".join(argv).startswith(forced):
+        return fail(f"fake claude: forced failure of {forced}")
+    if argv[:1] != ["plugin"]:
+        return fail(f"fake claude: unsupported call {argv}")
+    db_path = os.environ.get("FAKE_CLAUDE_DB")
+    if not db_path:
+        return fail("fake claude: FAKE_CLAUDE_DB is not set")
+    db = load(db_path)
+    positional, options = split_options(argv[1:])
+    status = plugin(db, positional, options)
+    save(db_path, db)
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
