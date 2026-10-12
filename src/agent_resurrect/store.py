@@ -11,12 +11,12 @@ from . import logs, paths
 from .model import Record, parse_iso, utc_now_iso
 
 # Pane keys are derived from environment variables, so they are allow-listed: a key can never
-# name a path outside panes_dir().
-PANE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# name a path outside panes_dir(). Matched with fullmatch: "$" would also accept a trailing newline.
+PANE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def valid_pane_key(pane_key: str) -> bool:
-    return isinstance(pane_key, str) and bool(PANE_KEY.match(pane_key)) and ".." not in pane_key
+    return isinstance(pane_key, str) and bool(PANE_KEY.fullmatch(pane_key)) and ".." not in pane_key
 
 
 def record_path(pane_key: str) -> Path:

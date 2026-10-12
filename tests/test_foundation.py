@@ -62,7 +62,9 @@ class StoreTest(unittest.TestCase):
             self.assertTrue(first)
 
     def test_pane_keys_cannot_escape_the_panes_directory(self):
-        for bad in ["", "../x", "a/b", ".hidden", "a..b", "x" * 200, "has space"]:
+        # "$" also matches before a trailing newline, so a key must match in full.
+        for bad in ["", "../x", "a/b", ".hidden", "a..b", "x" * 200, "has space", "abc\n",
+                    "iterm-10FE02F5-C525-405E-9E86-C8255ED17032\n", "\nabc"]:
             self.assertFalse(store.valid_pane_key(bad), bad)
             with self.assertRaises(ValueError):
                 store.record_path(bad)
@@ -113,6 +115,32 @@ class StoreTest(unittest.TestCase):
             self.assertEqual([(e["pane_key"], e["result"]) for e in events], [("fake-p1", "resumed")])
 
 
+class FakePs:
+    """Answers the `ps` invocations Procs makes (one pid, a comma-separated list, or -A) from a fixed table."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def __call__(self, argv):
+        self.calls.append(argv)
+        if "-A" in argv:
+            pids = sorted(self.rows)
+        else:
+            pids = [int(p) for p in argv[argv.index("-p") + 1].split(",") if int(p) in self.rows]
+        fields = argv[argv.index("-o") + 1]
+        lines = []
+        for pid in pids:
+            ppid, stat, tty, started, comm, args = self.rows[pid]
+            if fields == "args=":
+                lines.append(args)
+            elif fields == "pid=,args=":
+                lines.append(f"{pid:5d} {args}")
+            else:
+                lines.append(f"{pid:5d} {ppid:5d} {stat:<4} {tty:<8} {started}     {comm}")
+        return "".join(line + "\n" for line in lines)
+
+
 class ProcsTest(unittest.TestCase):
     def fake_ps(self, rows):
         def run(argv):
@@ -146,6 +174,40 @@ class ProcsTest(unittest.TestCase):
         self.assertEqual([p.pid for p in fake.ancestors(30)], [30, 20, 10])
         looped = FakeProcs(proc(5, 6, "a"), proc(6, 5, "b"))
         self.assertEqual([p.pid for p in looped.ancestors(5)], [5, 6])
+
+    def test_ancestors_from_ps_output(self):
+        # Rows: pid -> (ppid, stat, tty, lstart as ps prints it, comm, args). 7 and 8 are each other's parent.
+        rows = {
+            300: (200, "S", "ttys029", "Mon Oct 12 11:40:05 2026", "/usr/bin/python3",
+                  "/usr/bin/python3 -I x hook claude SessionStart"),
+            200: (100, "S", "ttys029", "Mon Oct 12 11:40:05 2026", "/bin/sh", "sh -c hook"),
+            100: (50, "S+", "ttys029", "Mon Oct  5 11:40:02 2026", "/Users/me/.local/share/claude/versions/2.1.296",
+                  "claude --dangerously-skip-permissions"),
+            50: (1, "Ss", "ttys029", "Mon Oct  5 11:39:00 2026", "-zsh", "-zsh"),
+            1: (0, "Ss", "??", "Mon Oct  5 11:00:00 2026", "/sbin/launchd", "/sbin/launchd"),
+            7: (8, "S", "??", "Mon Oct  5 11:00:00 2026", "a", "a"),
+            8: (7, "S", "??", "Mon Oct  5 11:00:00 2026", "b", "b"),
+        }
+        procs = Procs(run=FakePs(rows))
+        chain = procs.ancestors(300)
+        self.assertEqual([p.pid for p in chain], [300, 200, 100, 50])  # self first, stops before launchd
+        agent = chain[2]
+        self.assertEqual((agent.ppid, agent.stat, agent.tty, agent.started),
+                         (50, "S+", "ttys029", "Mon Oct 5 11:40:02 2026"))
+        self.assertEqual((agent.comm, agent.args),
+                         ("/Users/me/.local/share/claude/versions/2.1.296", "claude --dangerously-skip-permissions"))
+        self.assertEqual(chain[0].args, "/usr/bin/python3 -I x hook claude SessionStart")
+        self.assertEqual(chain[3].name, "zsh")
+        self.assertEqual([p.pid for p in procs.ancestors(7)], [7, 8])  # cycle-safe
+        self.assertEqual(procs.ancestors(999), [])
+        self.assertEqual(Procs(run=lambda argv: "").ancestors(300), [])  # ps unavailable
+
+    def test_real_ps_ancestors_start_with_this_process(self):
+        chain = Procs().ancestors(os.getpid())
+        self.assertGreaterEqual(len(chain), 2)
+        self.assertEqual((chain[0].pid, chain[0].ppid, chain[1].pid), (os.getpid(), os.getppid(), os.getppid()))
+        self.assertIn("unittest", chain[0].args)
+        self.assertTrue(all(p.pid > 1 for p in chain))
 
     def test_is_alive_requires_matching_start_time(self):
         fake = FakeProcs(proc(42, 1, "claude", started="Mon Oct 12 11:40:02 2026"))
