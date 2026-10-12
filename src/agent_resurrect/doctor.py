@@ -16,6 +16,16 @@ from .procs import Procs
 from .settings import all_settings
 from .terminals import detect_terminal
 
+# C0 controls, DEL and C1 controls (0x9b is a one-byte CSI). Printed raw, text from transcripts, records or the
+# environment could drive the terminal: rewrite the screen, set the title, or write the clipboard (OSC 52).
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def printable(value: object) -> str:
+    """`value` as one line that is safe to print: each control character becomes "?" (1:1, so columns align)."""
+    return _CONTROL.sub("?", str(value))
+
+
 # `sysctl -n kern.boottime` prints "{ sec = 1791785041, usec = 851234 } Mon Oct 12 11:34:01 2026".
 # Anchor on "{ sec =": a bare "sec =" also matches inside "usec =".
 BOOT_TIME = re.compile(r"\{ sec = (\d+),")
@@ -54,10 +64,10 @@ class _Report:
         self.failed = True
         self._line("FAIL", text)
         if fix:
-            print(f"      fix: {fix}", file=self.out)
+            print(f"      fix: {printable(fix)}", file=self.out)
 
     def _line(self, level: str, text: str) -> None:
-        print(f"{level:<6}{text}", file=self.out)
+        print(f"{level:<6}{printable(text)}", file=self.out)
 
 
 def _plural(count: int, singular: str, plural: str) -> str:

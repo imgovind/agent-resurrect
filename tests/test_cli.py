@@ -395,6 +395,55 @@ class CliListTest(CliCase):
         self.assertIn('"s-1"', out)  # no adapter to describe it, so the session id is the title
 
 
+HOSTILE = "\x1b]52;c;ZXZpbA==\x07\x1b[2J\x9b31m"  # OSC 52 clipboard write, clear screen, 8-bit CSI
+
+
+def assert_no_control_chars(test, text):
+    test.assertNotRegex(text.replace("\n", ""), r"[\x00-\x1f\x7f-\x9f]")
+
+
+class CliTerminalSafetyTest(CliCase):
+    """Text from transcripts, records and the environment must never reach the terminal as escape sequences."""
+
+    def test_ls_and_resume_messages_neutralise_control_characters(self):
+        put(make_record(session_id="s" + HOSTILE, cwd="/tmp/x" + HOSTILE, pane_label="p" + HOSTILE,
+                        agent="fake"), 5)
+        code, out, _ = self.run_cli("ls")
+        self.assertEqual(code, 0)
+        assert_no_control_chars(self, out)
+        self.assertIn("?]52;c;ZXZpbA==??[2J?31m", out)  # visible, one "?" per control character
+
+        self.agent = FakeAgent(exists=False)  # "Session <id> no longer exists" echoes the session id
+        code, out, err = self.run_cli("resume", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("no longer exists", out)
+        assert_no_control_chars(self, out + err)
+
+    def test_find_neutralises_control_characters(self):
+        hostile = candidate("s-9" + HOSTILE, str(self.home), title="Fix" + HOSTILE)
+        hostile.info.first_prompt = "hello" + HOSTILE
+        hostile.roles = {"you" + HOSTILE: 1}
+
+        class FindAgent(FakeAgent):
+            def find_by_text(self, text, exclude=None, limit=5):
+                return [hostile, candidate("s-8" + HOSTILE, None, title="Other" + HOSTILE)]
+
+        self.agent = FindAgent()
+        code, out, _ = self.run_cli("find", "some pasted words")
+        self.assertEqual(code, 0)
+        assert_no_control_chars(self, out)
+
+    def test_install_steps_and_errors_neutralise_control_characters(self):
+        fake = types.SimpleNamespace(install=lambda settings=None: [Step("x" + HOSTILE, "failed", "boom" + HOSTILE)])
+        with mock.patch.object(cli, "installer", fake):
+            code, out, _ = self.run_cli("install", "--yes")
+        self.assertEqual(code, 1)
+        assert_no_control_chars(self, out)
+        code, _, err = self.run_cli("resume", "nope" + HOSTILE)
+        self.assertEqual(code, 1)
+        assert_no_control_chars(self, err)
+
+
 class CliResumeTest(CliCase):
     def test_resume_by_number_and_by_session_id(self):
         put(make_record(pane_key="fake-p1", session_id="s-old"), 30)

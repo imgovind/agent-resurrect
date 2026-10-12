@@ -100,6 +100,17 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("WARN  not running inside a supported terminal (iTerm2)", out)
 
+    def test_output_neutralises_control_characters(self):
+        hostile = "\x1b]52;c;ZXZpbA==\x07\x9b2J"
+        os.environ["FAKE_PANE"] = "p1" + hostile  # the pane label comes from the environment
+        self.settings = [FakeSetting("test.bad", ok=False, detail="off" + hostile, fix_hint="run" + hostile),
+                         FakeSetting("test.raises", error=OSError("bad" + hostile))]
+        code, out = self.run_doctor()
+        self.assertEqual(code, 1)
+        self.assertNotRegex(out.replace("\n", ""), r"[\x00-\x1f\x7f-\x9f]")
+        self.assertIn("OK    fake pane p1?]52;c;ZXZpbA==??2J", out)
+        self.assertEqual(doctor.printable("a\x1bb\tc‍d"), "a?b?c‍d")  # zero-width joiner (emoji) kept
+
     def test_boot_time_parsing_uses_sec_not_usec(self):
         text = "{ sec = 1791785041, usec = 851234 } Mon Oct 12 11:34:01 2026"
         self.assertEqual(doctor.parse_boot_time(text), 1791785041)

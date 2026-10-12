@@ -16,6 +16,7 @@ from .agents import all_agents, get_agent
 from .agents.base import AgentAdapter, HookContext
 from .config import DEFAULTS as CONFIG_DEFAULTS
 from .config import load_config, set_value
+from .doctor import printable
 from .model import Candidate, Record, SessionInfo, parse_iso
 from .procs import Procs
 from .settings import all_settings
@@ -28,7 +29,13 @@ NO_MATCH = ("No session contains that text. Try a different snippet: plain prose
 
 
 def _error(message: str) -> None:
-    print(f"{PROG}: {message}", file=sys.stderr)
+    print(f"{PROG}: {printable(message)}", file=sys.stderr)
+
+
+def _say(line: str) -> None:
+    """Print one line built from transcripts, records or other untrusted text, with control characters
+    neutralised so it can never act as a terminal escape sequence."""
+    print(printable(line))
 
 
 def _log_quietly(message: str) -> None:
@@ -127,7 +134,7 @@ def _entries(procs: Procs, include_running: bool) -> List[_Entry]:
 
 def _one_line(text: Optional[str], width: int) -> str:
     text = " ".join((text or "").split())
-    return text if len(text) <= width else text[:width - 3] + "..."
+    return printable(text if len(text) <= width else text[:width - 3] + "...")
 
 
 def _short_path(path: str) -> str:
@@ -163,7 +170,7 @@ def _print_table(rows: List[List[str]]) -> None:
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     for row in rows:
         cells = [row[0].rjust(widths[0])] + [cell.ljust(width) for cell, width in zip(row[1:], widths[1:])]
-        print("  ".join(cells).rstrip())
+        _say("  ".join(cells).rstrip())
 
 
 def _show_listing(include_running: bool) -> int:
@@ -197,10 +204,10 @@ def _resume(record: Record) -> int:
     cfg = load_config()
     decision = restore.check_eligible(record, agent, Procs(), cfg, require_live=False)
     if decision.reason == "agent-running":
-        print(f"That session is still running (pid {record.agent_pid}).")
+        _say(f"That session is still running (pid {record.agent_pid}).")
         return 1
     if decision.reason == "session-gone":
-        print(f"Session {record.session_id} no longer exists, so it cannot be resumed.")
+        _say(f"Session {record.session_id} no longer exists, so it cannot be resumed.")
         return 1
     # restore.launch is looked up now, not bound as resume_record's default, so it can be replaced.
     return restore.resume_record(record, agent, cfg, stdout=sys.stdout, launcher=restore.launch)
@@ -300,15 +307,15 @@ def _print_best(agent: AgentAdapter, best: Candidate, runner_up: Optional[Candid
     record = Record(terminal="", pane_key="", agent=agent.name, session_id=best.session_id,
                     cwd=best.cwd or "", transcript_path=best.transcript_path)
     plan = restore.plan_resume(record, agent, load_config())
-    print(f"BEST MATCH  ({best.hits}/{best.total_probes} probes; text appears in: {_roles(best.roles)})")
-    print(f"  session : {best.session_id}")
-    print(f"  agent   : {agent.name}")
-    print(f"  title   : {_one_line(best.info.title, 100) or '(none)'}")
-    print(f"  opens   : {_one_line(best.info.first_prompt, 100) or '(unknown)'}")
-    print(f"  active  : {_active(best.info)}")
-    print(f"  cwd     : {best.cwd or '(unknown)'}")
+    _say(f"BEST MATCH  ({best.hits}/{best.total_probes} probes; text appears in: {_roles(best.roles)})")
+    _say(f"  session : {best.session_id}")
+    _say(f"  agent   : {agent.name}")
+    _say(f"  title   : {_one_line(best.info.title, 100) or '(none)'}")
+    _say(f"  opens   : {_one_line(best.info.first_prompt, 100) or '(unknown)'}")
+    _say(f"  active  : {_active(best.info)}")
+    _say(f"  cwd     : {best.cwd or '(unknown)'}")
     if best.cwd and plan.warning:
-        print(f"  WARNING : {plan.warning}")
+        _say(f"  WARNING : {plan.warning}")
     elif best.cwd and not best.cwd_trusted:
         print("  WARNING : the recorded cwd does not match the transcript's project folder; if resume "
               "says no conversation found, try the folder's original directory.")
@@ -319,7 +326,7 @@ def _print_best(agent: AgentAdapter, best: Candidate, runner_up: Optional[Candid
     elif runner_up is not None and runner_up.hits == best.hits:
         print("  NOTE    : ambiguous, another session matches equally well (listed below); compare titles.")
     print("\nResume command:\n")
-    print(f"  {restore.format_command(plan)}")
+    _say(f"  {restore.format_command(plan)}")
 
 
 def cmd_find(args: argparse.Namespace) -> int:
@@ -350,7 +357,7 @@ def cmd_find(args: argparse.Namespace) -> int:
         for number, (other_agent, c) in enumerate(found[1:], 2):
             when = _local_time(iso=c.info.started) or _local_time(epoch=c.info.last_active) or ""
             title = _one_line(c.info.title or c.info.first_prompt, 60)
-            print(f"  {number}. {c.session_id}  {c.hits}/{c.total_probes}  [{_roles(c.roles)}]  {when}  {title}".rstrip())
+            _say(f"  {number}. {c.session_id}  {c.hits}/{c.total_probes}  [{_roles(c.roles)}]  {when}  {title}".rstrip())
     return 0
 
 
@@ -372,7 +379,7 @@ def _confirm(prompt: str, default: bool = True) -> bool:
 def _print_steps(results) -> bool:
     """Print one line per installer step; True if any failed."""
     for result in results:
-        print(f"{result.status:<9}  {result.id}  {result.detail}".rstrip())
+        _say(f"{result.status:<9}  {result.id}  {result.detail}".rstrip())
     return any(result.status == "failed" for result in results)
 
 
@@ -380,7 +387,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if not args.yes and _interactive():
         print(f"{PROG} will make these changes ({PROG} uninstall reverts them):")
         for setting in all_settings():
-            print(f"  - {setting.description or setting.id}")
+            _say(f"  - {setting.description or setting.id}")
         if not _confirm("Proceed? [Y/n] "):
             print("Cancelled. Nothing was changed.")
             return 1
