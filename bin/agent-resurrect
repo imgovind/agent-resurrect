@@ -1,0 +1,69 @@
+#!/bin/sh
+# agent-resurrect, as the Claude Code plugin ships it. https://github.com/imgovind/agent-resurrect
+#
+# The plugin's hooks run this file, and Claude Code puts this directory on the Bash tool's PATH while the
+# plugin is enabled, so the command works there before (and without) the installer. The installer copies
+# it to ~/.local/share/agent-resurrect/bin, where it serves the same plugin from the local marketplace.
+#
+# It finds Python 3.9 or newer and runs ../libexec/agent-resurrect.py with it, isolated (-I) and with
+# bytecode cached under ~/.cache/agent-resurrect, because the system Python's own directories are read-only.
+#
+# "agent-resurrect hook ..." prints nothing, whatever happens, and exits 0 when there is no Python:
+# Claude Code adds SessionStart output to the model's context and reports a failing hook to the user.
+
+if [ "${1:-}" = hook ]; then
+  exec >/dev/null 2>&1
+fi
+
+give_up() {
+  if [ "${1:-}" = hook ]; then exit 0; fi
+  printf 'agent-resurrect: %s\n' "$reason" >&2
+  exit 1
+}
+
+# This file's own location (it may be run through symlinks), and the tree it belongs to.
+self=$0
+hops=0
+while [ -L "$self" ] && [ "$hops" -lt 40 ]; do
+  link=$(readlink "$self") || break
+  case $link in
+    /*) self=$link ;;
+    *) case $self in */*) self=${self%/*}/$link ;; *) self=$link ;; esac ;;
+  esac
+  hops=$((hops + 1))
+done
+case $self in
+  */*) dir=${self%/*} ;;
+  *) dir=. ;;
+esac
+if ! root=$(cd -P -- "$dir/.." 2>/dev/null && pwd); then
+  reason="cannot find the directory this command is in ($dir)"
+  give_up "$@"
+fi
+
+# use PYTHON: if it is Python 3.9 or newer, set $python to the interpreter it really runs. That skips the
+# xcrun trampoline behind /usr/bin/python3 and pyenv or asdf shims on every later run of this process.
+# One probe costs about 18 ms. It writes no bytecode (-B: Apple's Python would cache it under ~/Library),
+# and stdin is kept for the command, which may read a hook payload from it.
+use() {
+  found=$("$1" -I -S -B -c 'import sys; sys.exit(1) if sys.version_info < (3, 9) else print(sys.executable)' \
+    </dev/null 2>/dev/null) || return 1
+  python=${found:-$1}
+}
+
+# /usr/bin/python3 is a stub that opens the "install command line developer tools" dialog when they are
+# missing, so it is tried only when xcode-select -p says they are installed.
+python=""
+if xcode-select -p >/dev/null 2>&1 && [ -x /usr/bin/python3 ] && use /usr/bin/python3; then
+  :
+elif candidate=$(command -v python3 2>/dev/null) && [ "$candidate" != /usr/bin/python3 ] && use "$candidate"; then
+  :
+else
+  reason="Python 3.9 or newer is required. Install Apple's command line tools with: xcode-select --install"
+  give_up "$@"
+fi
+
+if [ -n "${HOME:-}" ]; then
+  exec "$python" -I -X "pycache_prefix=$HOME/.cache/agent-resurrect/pycache" "$root/libexec/agent-resurrect.py" "$@"
+fi
+exec "$python" -I "$root/libexec/agent-resurrect.py" "$@"

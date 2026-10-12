@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # agent-resurrect installer for macOS. https://github.com/imgovind/agent-resurrect
 #
-#   curl -fsSL https://raw.githubusercontent.com/imgovind/agent-resurrect/main/install.sh | bash
-#   ./install.sh        (from a clone: installs the working tree instead of downloading)
+#   curl -fsSL https://github.com/imgovind/agent-resurrect/releases/latest/download/install.sh | bash
+#   ./install.sh                (from a clone or the Claude Code plugin: installs those files, no download)
+#   ./install.sh --dry-run      (shows what "agent-resurrect install" would change; writes nothing in HOME)
 #
 # It copies agent-resurrect to ~/.local/share/agent-resurrect, writes the launcher ~/.local/bin/agent-resurrect
 # and the "resurrect" alias, then runs "agent-resurrect install". That applies each setting and records its
@@ -10,11 +11,19 @@
 # It never uses sudo and only writes inside your home directory and your user defaults.
 #
 # Everything runs inside functions called from the last line, so a partly downloaded script does nothing.
-# Environment: AGENT_RESURRECT_REF picks the release to download (default below); XDG_DATA_HOME is honoured.
+# Environment: AGENT_RESURRECT_REF picks a branch, tag or commit to download instead of this release;
+# XDG_DATA_HOME is honoured.
 set -euo pipefail
 
 DEFAULT_REF="v0.1.0"
+# The install.sh attached to each GitHub release has this set, by .github/workflows/release.yml, to the full
+# commit SHA that DEFAULT_REF named when it was released. A tag can be moved and a commit cannot, so that
+# installer downloads exactly the code that was released. It is set here only, never from the environment.
+AGENT_RESURRECT_COMMIT=""
 REPO="imgovind/agent-resurrect"
+# What gets installed: the code, and the Claude Code plugin (whose root is the install directory).
+ITEMS="src libexec bin shell hooks skills .claude-plugin install.sh README.md LICENSE"
+DRY_RUN=0
 PYTHON=""
 SRC_DIR=""
 TMP_DIR=""
@@ -26,6 +35,28 @@ warn() { printf 'agent-resurrect: warning: %s\n' "$*" >&2; }
 die() {
   printf 'agent-resurrect: %s\n' "$*" >&2
   exit 1
+}
+
+usage() {
+  say "usage: install.sh [--dry-run]"
+  say "  --dry-run  show what the installer would change, and change nothing"
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) DRY_RUN=1 ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
 }
 
 cleanup() {
@@ -52,7 +83,8 @@ preflight() {
 }
 
 python_ok() {
-  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1
+  # -B: Apple's Python otherwise caches bytecode in ~/Library/Caches/com.apple.python, which --dry-run must not.
+  "$1" -B -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1
 }
 
 find_python() {
@@ -71,7 +103,7 @@ find_python() {
     esac
     case "$candidate" in
       # pyenv and asdf shims choose a Python per directory; pin the interpreter they chose now.
-      */shims/*) candidate="$("$candidate" -c 'import sys; print(sys.executable)')" ;;
+      */shims/*) candidate="$("$candidate" -B -c 'import sys; print(sys.executable)')" ;;
     esac
     PYTHON="$candidate"
     return 0
@@ -86,11 +118,32 @@ script_dir() {
   fi
 }
 
+make_tmp() {
+  if [ -z "$TMP_DIR" ]; then
+    TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-resurrect.XXXXXX")"
+  fi
+}
+
 download() {
-  local ref="${AGENT_RESURRECT_REF:-$DEFAULT_REF}"
-  local url="https://codeload.github.com/$REPO/tar.gz/$ref"
-  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-resurrect.XXXXXX")"
-  say "Downloading agent-resurrect $ref"
+  local ref="${AGENT_RESURRECT_REF:-}" label url
+  if [ -n "$ref" ]; then
+    label="$ref"
+  elif [ -n "$AGENT_RESURRECT_COMMIT" ]; then
+    case "$AGENT_RESURRECT_COMMIT" in
+      *[!0-9a-f]*) die "AGENT_RESURRECT_COMMIT in this script is not a full commit SHA: $AGENT_RESURRECT_COMMIT" ;;
+    esac
+    if [ "${#AGENT_RESURRECT_COMMIT}" -ne 40 ]; then
+      die "AGENT_RESURRECT_COMMIT in this script is not a full commit SHA: $AGENT_RESURRECT_COMMIT"
+    fi
+    ref="$AGENT_RESURRECT_COMMIT"
+    label="$DEFAULT_REF (commit $AGENT_RESURRECT_COMMIT)"
+  else
+    ref="$DEFAULT_REF"
+    label="$ref"
+  fi
+  url="https://codeload.github.com/$REPO/tar.gz/$ref"
+  make_tmp
+  say "Downloading agent-resurrect $label"
   if ! curl -fsSL "$url" | tar -xzf - -C "$TMP_DIR"; then
     die "could not download $url"
   fi
@@ -100,24 +153,34 @@ download() {
   fi
 }
 
-fetch() {
-  local here item
+locate_source() {
+  local here
   here="$(script_dir)"
   if [ -n "$here" ] && [ -f "$here/src/agent_resurrect/__init__.py" ]; then
     SRC_DIR="$here"
-    say "Installing from $SRC_DIR"
+    if [ "$DRY_RUN" -eq 1 ]; then say "Checking the files in $SRC_DIR"; else say "Installing from $SRC_DIR"; fi
   else
     download
   fi
-  DATA="${XDG_DATA_HOME:-$HOME/.local/share}/agent-resurrect"
-  rm -rf "$DATA.new"
-  mkdir -p "$DATA.new"
-  for item in src bin shell plugin .claude-plugin install.sh README.md LICENSE; do
+}
+
+copy_tree() {
+  # Copy the installed items from SRC_DIR into a new directory $1, without bytecode.
+  local dest="$1" item
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  for item in $ITEMS; do
     if [ -e "$SRC_DIR/$item" ]; then
-      cp -R "$SRC_DIR/$item" "$DATA.new/"
+      cp -R "$SRC_DIR/$item" "$dest/"
     fi
   done
-  find "$DATA.new" -name __pycache__ -type d -prune -exec rm -rf {} +
+  find "$dest" -name __pycache__ -type d -prune -exec rm -rf {} +
+}
+
+fetch() {
+  locate_source
+  DATA="${XDG_DATA_HOME:-$HOME/.local/share}/agent-resurrect"
+  copy_tree "$DATA.new"
   rm -rf "$DATA"
   mv "$DATA.new" "$DATA"
 }
@@ -139,7 +202,8 @@ write_launchers() {
     # writable cache every run (each Claude Code hook) would recompile it: about 155 ms instead of 45 ms.
     # shellcheck disable=SC2016  # "$@" is meant literally: it belongs to the launcher, not to this script
     printf 'exec %s -I -X %s %s "$@"\n' "$(sh_quote "$PYTHON")" \
-      "$(sh_quote "pycache_prefix=$HOME/.cache/agent-resurrect/pycache")" "$(sh_quote "$DATA/bin/agent-resurrect.py")"
+      "$(sh_quote "pycache_prefix=$HOME/.cache/agent-resurrect/pycache")" \
+      "$(sh_quote "$DATA/libexec/agent-resurrect.py")"
   } >"$tmp"
   chmod 755 "$tmp"
   mv -f "$tmp" "$launcher"
@@ -163,10 +227,31 @@ run_install() {
   say "Installed. Open a new terminal tab to activate. Uninstall any time with: agent-resurrect uninstall"
 }
 
+dry_run() {
+  # Stage exactly what an install would copy in a temporary directory and ask it what it would change.
+  # -B: no bytecode is written anywhere, so nothing lands in HOME.
+  local status=0
+  locate_source
+  make_tmp
+  copy_tree "$TMP_DIR/stage"
+  say "Dry run: nothing is written to your home directory or your settings."
+  "$PYTHON" -I -B "$TMP_DIR/stage/libexec/agent-resurrect.py" install --dry-run </dev/null || status=$?
+  say ""
+  if [ "$status" -ne 0 ]; then
+    die "the dry run failed (see above)."
+  fi
+  say "Dry run finished. Run the installer without --dry-run to make these changes."
+}
+
 main() {
   trap cleanup EXIT
+  parse_args "$@"
   preflight
   find_python
+  if [ "$DRY_RUN" -eq 1 ]; then
+    dry_run
+    return
+  fi
   fetch
   write_launchers
   run_install

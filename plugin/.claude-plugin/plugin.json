@@ -1,8 +1,0 @@
-{
-  "name": "agent-resurrect",
-  "version": "0.1.0",
-  "description": "Records which terminal pane each Claude Code session runs in, so agent-resurrect can resume it there after a restart.",
-  "author": { "name": "imgovind" },
-  "homepage": "https://github.com/imgovind/agent-resurrect",
-  "license": "MIT"
-}
