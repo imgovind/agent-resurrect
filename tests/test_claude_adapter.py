@@ -69,6 +69,20 @@ class ClaudeHookTest(HookTestCase):
                          ("/x/s1.jsonl", "bypassPermissions", "startup"))
         self.assertTrue(record.recorded_at and record.updated_at)
 
+    def test_permission_mode_is_never_taken_from_command_line_text(self):
+        # Regression guard (security review, 2026-10-12): `ps` joins argv with spaces, so a prompt such as
+        # `claude "why is --dangerously-skip-permissions risky?"` is indistinguishable from the real flag.
+        # Trusting that text would let a resurrect ADD bypass mode the user never chose. The mode comes
+        # only from the hook payload or the transcript's top-level permissionMode (written by Claude Code).
+        payload_without_mode = {k: v for k, v in START.items() if k != "permission_mode"}
+        for args in ("claude why is --dangerously-skip-permissions risky",
+                     "claude --dangerously-skip-permissions",
+                     "claude explain --permission-mode bypassPermissions"):
+            with self.subTest(args=args):
+                store.delete("fake-p1")
+                self.agent.on_hook("SessionStart", dict(payload_without_mode), ctx(tree(agent_args=args)))
+                self.assertIsNone(store.load("fake-p1").permission_mode)
+
     def test_nested_claude_is_not_recorded(self):
         self.start(procs=tree(proc(50, 40, "claude", stat="S+", tty="ttys029"), proc(40, 1, "-zsh")))
         self.assertIsNone(store.load("fake-p1"))
