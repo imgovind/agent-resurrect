@@ -20,6 +20,18 @@ BASH_SNIPPET = REPO / "shell" / "agent-resurrect.bash"
 GUID = "10FE02F5-C525-405E-9E86-C8255ED17032"
 SESSION = f"w0t3p1:{GUID}"
 HOOK = "_agent_resurrect_first_prompt"
+TMUX = "/private/tmp/tmux-501/default,4242,0"
+
+# Shells that inherit an iTerm2 pane's ITERM_SESSION_ID without being that pane's own shell (review C1).
+# Each maps to the variables it adds to (or, with None, removes from) a direct iTerm2 pane's environment.
+INHERITED = {
+    "tmux": {"TERM_PROGRAM": "tmux", "TMUX": TMUX},
+    "tmux, TERM_PROGRAM passed through": {"TMUX": TMUX},
+    "screen": {"STY": "4242.ttys003.host"},
+    "zellij": {"ZELLIJ": "0"},
+    "vscode": {"TERM_PROGRAM": "vscode"},
+    "no TERM_PROGRAM": {"TERM_PROGRAM": None},
+}
 
 
 def _available(*candidates: str) -> List[str]:
@@ -55,15 +67,16 @@ class ShellSnippetTest(unittest.TestCase):
     # helpers
 
     def env(self, iterm=SESSION, **extra):
-        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "TERM": "dumb",
+        """A shell iTerm2 started directly in a pane; `extra` adds variables, and a value of None removes one."""
+        env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin", "TERM": "dumb", "TERM_PROGRAM": "iTerm.app",
                "XDG_STATE_HOME": str(self.state), "AGENT_RESURRECT_BIN": str(self.fake_bin)}
         if iterm is not None:
             env["ITERM_SESSION_ID"] = iterm
         env.update(extra)
-        return env
+        return {name: value for name, value in env.items() if value is not None}
 
     def add_record(self, session=SESSION):
-        key = ITermAdapter().pane_key({"ITERM_SESSION_ID": session})
+        key = ITermAdapter().pane_key({"TERM_PROGRAM": "iTerm.app", "ITERM_SESSION_ID": session})
         panes = self.state / "agent-resurrect" / "panes"
         panes.mkdir(parents=True, exist_ok=True)
         (panes / f"{key}.json").write_text("{}")
@@ -142,6 +155,17 @@ class ShellSnippetTest(unittest.TestCase):
                 self.assertEqual(self.runs(), [])
                 self.assertNotIn(HOOK, self.last_line(result, "hooks="))
 
+    def test_zsh_spawns_nothing_inside_a_multiplexer_or_another_program(self):
+        self.require(ZSHES, "zsh")
+        self.add_record()
+        for shell in ZSHES:
+            for name, extra in INHERITED.items():
+                with self.subTest(shell=shell, case=name):
+                    self.reset_marker()
+                    result = self.zsh(shell, self.zsh_prompts(), self.env(**extra))
+                    self.assertEqual(self.runs(), [], result.stderr)
+                    self.assertNotIn(HOOK, self.last_line(result, "hooks="))
+
     def test_zsh_non_interactive_shell_registers_nothing(self):
         self.require(ZSHES, "zsh")
         self.add_record()
@@ -207,6 +231,17 @@ class ShellSnippetTest(unittest.TestCase):
                 result = self.bash(shell, self.bash_prompts(), self.env(iterm=None))
                 self.assertEqual(self.runs(), [])
                 self.assertEqual(self.last_line(result, "pc="), "")
+
+    def test_bash_spawns_nothing_inside_a_multiplexer_or_another_program(self):
+        self.require(BASHES, "bash")
+        self.add_record()
+        for shell in BASHES:
+            for name, extra in INHERITED.items():
+                with self.subTest(shell=shell, case=name):
+                    self.reset_marker()
+                    result = self.bash(shell, self.bash_prompts(), self.env(**extra))
+                    self.assertEqual(self.runs(), [], result.stderr)
+                    self.assertEqual(self.last_line(result, "pc="), "")
 
     def test_bash_non_interactive_shell_registers_nothing(self):
         self.require(BASHES, "bash")
@@ -305,7 +340,7 @@ class ShellSnippetTest(unittest.TestCase):
         for shell, run, snippet in runners:
             script = 'key=""; ' + self.key_line(snippet) + '; printf "key=%s\\n" "$key"'
             for value in values:
-                expected = ITermAdapter().pane_key({"ITERM_SESSION_ID": value})
+                expected = ITermAdapter().pane_key(self.env(iterm=value))
                 if expected is None:
                     continue
                 with self.subTest(shell=shell, value=value):
@@ -313,6 +348,30 @@ class ShellSnippetTest(unittest.TestCase):
                     self.assertEqual(self.last_line(result, "key="), expected)
                     compared += 1
         self.assertGreaterEqual(compared, 3 * len(runners))
+
+
+    def test_pane_recognition_contract(self):
+        """The whole snippet runs `auto` exactly when ITermAdapter recognises the pane: same key, same
+        multiplexer guard. A record exists for the GUID in every case, so only recognition decides."""
+        self.require(ZSHES + BASHES, "zsh or bash")
+        self.add_record()
+        combos = {"direct pane": {}, "empty multiplexer variables": {"TMUX": "", "STY": "", "ZELLIJ": ""}}
+        combos.update(INHERITED)
+        combos.update({"tmux and screen": {"TMUX": TMUX, "STY": "1.ttys001.h"},
+                       "zellij inside vscode": {"TERM_PROGRAM": "vscode", "ZELLIJ": "0"}})
+        runners = [(shell, self.zsh, self.zsh_prompts()) for shell in ZSHES] + \
+                  [(shell, self.bash, self.bash_prompts()) for shell in BASHES]
+        for shell, run, script in runners:
+            for name, extra in combos.items():
+                env = self.env(**extra)
+                expected = ["ran auto"] if ITermAdapter().pane_key(env) is not None else []
+                with self.subTest(shell=shell, case=name):
+                    self.reset_marker()
+                    result = run(shell, script, env)
+                    self.assertEqual(self.runs(), expected, result.stderr)
+        # Both outcomes occur, so the comparison above is not vacuous.
+        self.assertIsNotNone(ITermAdapter().pane_key(self.env()))
+        self.assertIsNone(ITermAdapter().pane_key(self.env(**INHERITED["tmux"])))
 
 
 if __name__ == "__main__":
