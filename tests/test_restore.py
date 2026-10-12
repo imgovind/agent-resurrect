@@ -209,6 +209,15 @@ class RestorePlanTest(unittest.TestCase):
         plan = ResumePlan(argv=["fake agent", "--resume", "s-1"], cwd=None, warning="w")
         self.assertEqual(restore.format_command(plan), "'fake agent' --resume s-1")
 
+    def test_format_command_with_an_absolute_executable(self):
+        # The Claude adapter falls back to ~/.claude/local/claude when claude is not on PATH.
+        plan = ResumePlan(["/Users/me/.claude/local/claude", "--resume", "s-1"], "/tmp", None,
+                          env={"CLAUDE_CONFIG_DIR": "/x"})
+        self.assertEqual(restore.format_command(plan),
+                         "cd /tmp && CLAUDE_CONFIG_DIR=/x /Users/me/.claude/local/claude --resume s-1")
+        plan = ResumePlan(["/Users/a b/.claude/local/claude", "--resume", "s-1"], None, None)
+        self.assertEqual(restore.format_command(plan), "'/Users/a b/.claude/local/claude' --resume s-1")
+
     def test_plan_carries_a_copy_of_the_recorded_environment(self):
         recorded = {"CLAUDE_CONFIG_DIR": "/Users/me/.claude-work"}
         record = make_record(cwd="", resume_env=recorded)
@@ -298,6 +307,14 @@ class RestoreLaunchTest(unittest.TestCase):
         self.assertIn("CLAUDE_CONFIG_DIR=/x/a b", lines)
         self.assertIn("KEEP_ME=kept", lines)
         self.assertNotIn("CLAUDE_CONFIG_DIR=/shell", lines)
+
+    def test_launch_execs_an_absolute_executable_without_a_path_search(self):
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from agent_resurrect.restore import ResumePlan, launch; "
+                "launch(ResumePlan(['/usr/bin/env'], None, None, env={'MARK': 'm'}))")
+        result = subprocess.run([sys.executable, "-I", "-c", code, SRC], capture_output=True, text=True, timeout=30,
+                                env={"PATH": ""})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MARK=m", result.stdout.splitlines())
 
     def test_launch_restores_signals_python_ignores_before_exec(self):
         # Python starts with SIGPIPE (and SIGXFSZ) ignored; an ignored disposition survives exec.
@@ -438,6 +455,23 @@ class RestoreResumeRecordTest(unittest.TestCase):
         text = self.out.getvalue()
         self.assertIn("agent-resurrect: could not start fake-agent: ", text)
         self.assertIn("When fake-agent is on your PATH, resume with: agent-resurrect resume s-1", text)
+
+    def test_launch_failure_of_an_absolute_executable_names_it_and_the_command(self):
+        class LocalInstall(FakeAgent):
+            def resume_argv(self, record, config):
+                return ["/Users/me/.claude/local/claude", "--resume", record.session_id]
+
+        record = store.save(make_record())
+
+        def launcher(plan):
+            raise FileNotFoundError(2, "No such file or directory", plan.argv[0])
+
+        self.assertEqual(self.resume(record, agent=LocalInstall(), launcher=launcher), exitcodes.ERROR)
+        lines = self.out.getvalue().splitlines()
+        self.assertTrue(any(line.startswith("agent-resurrect: could not start /Users/me/.claude/local/claude: ")
+                            for line in lines), lines)
+        self.assertIn("When claude is on your PATH, resume with: agent-resurrect resume s-1", lines)
+        self.assertEqual(store.load(KEY).status, STATUS_SKIPPED)
 
     def test_launch_failure_of_an_unclaimed_record_leaves_its_status(self):
         record = store.save(make_record(status=STATUS_CONSUMED))
@@ -846,6 +880,12 @@ class EvilAgent(FakeAgent):
         return SessionInfo(title=EVIL_TITLE)
 
 
+class EvilPathAgent(EvilAgent):
+    """An absolute executable path with control characters in a folder name and in the file name."""
+    def resume_argv(self, record, config):
+        return ["/Users/me/odd\x1b[2Jdir/.claude/local/cla\x07ude", "--resume", record.session_id]
+
+
 class RestoreTerminalSafetyTest(unittest.TestCase):
     """Titles, prompts, paths and ids come from transcripts and hook payloads; printing them raw would let
     their escape sequences drive the terminal."""
@@ -893,6 +933,10 @@ class RestoreTerminalSafetyTest(unittest.TestCase):
                 restore.resume_record(make_record(session_id=EVIL_SESSION, cwd=EVIL_CWD), EvilAgent(), Config(),
                                       stdout=out, launcher=launcher, isatty=isatty)
                 outputs[name] = out.getvalue()
+                out = io.StringIO()
+                restore.resume_record(make_record(session_id=EVIL_SESSION, cwd=EVIL_CWD), EvilPathAgent(), Config(),
+                                      stdout=out, launcher=launcher, isatty=isatty)
+                outputs[name + ", evil executable path"] = out.getvalue()
         for name, text in outputs.items():
             with self.subTest(name):
                 self.assertTrue(text, "every path prints something")

@@ -298,10 +298,13 @@ def _launch(record: Record, plan: ResumePlan, out, launcher: Callable[[ResumePla
     try:
         launcher(plan)
     except OSError as exc:
-        program = printable(plan.argv[0])
-        print(f"agent-resurrect: could not start {program}: {printable(exc)}", file=out)
-        print(f"When {program} is on your PATH, resume with: agent-resurrect resume {_quote(record.session_id)}",
-              file=out)
+        # argv[0] may be a full path (an adapter's fallback, e.g. ~/.claude/local/claude): the error names that
+        # exact path, and the hint names the command a user puts on PATH.
+        program = plan.argv[0]
+        command = os.path.basename(program.rstrip("/")) or program
+        print(f"agent-resurrect: could not start {printable(program)}: {printable(exc)}", file=out)
+        print(f"When {printable(command)} is on your PATH, resume with: "
+              f"agent-resurrect resume {_quote(record.session_id)}", file=out)
         if claimed and _stored_status(record) is not None:
             store.set_status(key, STATUS_SKIPPED)
         store.append_restore_event(key, LAUNCH_FAILED, f"{record.session_id}: {exc}")
