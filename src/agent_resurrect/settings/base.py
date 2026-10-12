@@ -14,6 +14,7 @@ class Setting(ABC):
     id: str = ""           # stable key in the install manifest, e.g. "macos.keep_windows"
     description: str = ""  # one sentence for the install summary
     fix_hint: str = ""     # what doctor tells the user when check() fails
+    skip_detail: str = ""  # why applicable() is False, shown as the skipped install step's detail
 
     def applicable(self) -> bool:
         """Can this setting be applied on this machine at all (e.g. iTerm2 or Claude Code installed)?

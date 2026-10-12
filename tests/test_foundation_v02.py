@@ -7,6 +7,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,6 +58,46 @@ class ClaimTest(unittest.TestCase):
             self.assertEqual(results.count("WON"), 1, results)
             self.assertEqual(store.load("fake-p1").status, STATUS_CONSUMED)
             self.assertEqual([p.name for p in paths.panes_dir().iterdir()], ["fake-p1.json"])  # no claim files left
+
+    def test_each_claim_uses_its_own_claim_file(self):
+        """Two claims in one process (threads) must not share a claim file: the name adds a random part."""
+        with temp_home():
+            store.save(make_record())
+            store.save(make_record(pane_key="fake-p2"))
+            targets = []
+            real_rename = os.rename
+
+            def spy(src, dst):
+                targets.append(Path(dst).name)
+                return real_rename(src, dst)
+
+            with mock.patch.object(store.os, "rename", spy):
+                self.assertIsNotNone(store.claim("fake-p1"))
+                self.assertIsNotNone(store.claim("fake-p2"))
+            pattern = r"\.claim-fake-p[12]-%d-[0-9a-f]{32}" % os.getpid()
+            self.assertEqual(len(targets), 2)
+            for name in targets:
+                self.assertRegex(name, "^" + pattern + "$")
+            self.assertNotEqual(targets[0].rsplit("-", 1)[1], targets[1].rsplit("-", 1)[1])
+
+    def test_exactly_one_of_many_racing_threads_wins(self):
+        with temp_home():
+            store.save(make_record())
+            barrier = threading.Barrier(8)
+            results = []
+
+            def race():
+                barrier.wait()
+                results.append(store.claim("fake-p1") is not None)
+
+            threads = [threading.Thread(target=race) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+            self.assertEqual(results.count(True), 1, results)
+            self.assertEqual(store.load("fake-p1").status, STATUS_CONSUMED)
+            self.assertEqual([p.name for p in paths.panes_dir().iterdir()], ["fake-p1.json"])
 
 
 class GcTest(unittest.TestCase):
@@ -144,6 +185,7 @@ class ContractsTest(unittest.TestCase):
                 pass
 
         self.assertTrue(Minimal().applicable())
+        self.assertEqual(Minimal().skip_detail, "")  # the installer falls back to a generic reason
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -115,10 +116,12 @@ def gc(max_age_days: int, now: Optional[datetime] = None,
 def claim(pane_key: str) -> Optional[Record]:
     """Atomically take a live record for restoring and mark it consumed; None if it is absent, not live,
     or another process got there first. When several shells race on one record (tmux, duplicated panes),
-    exactly one wins: the record file is renamed to a per-process claim file, and rename is atomic.
-    The claim file has no .json suffix, so list_records() never sees it."""
+    exactly one wins: the record file is renamed to a claim file unique to this call, and rename is atomic.
+    The name carries a random part as well as the pid, so two threads of one process never share a claim
+    file (one would otherwise unlink or put back the other's). It has no .json suffix, so list_records()
+    never sees it."""
     path = record_path(pane_key)
-    claim_path = path.with_name(f".claim-{pane_key}-{os.getpid()}")
+    claim_path = path.with_name(f".claim-{pane_key}-{os.getpid()}-{uuid.uuid4().hex}")
     try:
         os.rename(path, claim_path)
     except FileNotFoundError:
