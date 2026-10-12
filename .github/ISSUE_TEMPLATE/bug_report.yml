@@ -1,0 +1,81 @@
+name: Bug report
+description: A session did not come back, or a command did not do what the README says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. agent-resurrect 0.2.x supports macOS, iTerm2 and Claude Code only, and does not record sessions inside tmux, screen or zellij.
+        Before filing, the [Troubleshooting](https://github.com/imgovind/agent-resurrect#troubleshooting) section answers most "nothing came back" cases.
+        For a security problem, use [private reporting](https://github.com/imgovind/agent-resurrect/security/advisories/new) instead.
+        The log can contain folder paths and session ids. Check it before you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: when
+    attributes:
+      label: When did it happen
+      options:
+        - After a restart or crash
+        - Testing without a restart (simulate, or quitting iTerm2)
+        - During install, upgrade or uninstall
+        - Installing from inside Claude Code (plugin or setup skill)
+        - Running a command (ls, resume, find, adopt, config, doctor)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of agent-resurrect doctor
+      description: Run `~/.local/bin/agent-resurrect doctor` in an iTerm2 pane and paste everything it prints.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: agent-resurrect version
+      description: Output of `~/.local/bin/agent-resurrect --version`
+      placeholder: agent-resurrect 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`
+      placeholder: 2.1.296 (Claude Code)
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS and iTerm2 versions
+      placeholder: macOS 15.1, iTerm2 3.5.10
+    validations:
+      required: true
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Login shell
+      options:
+        - zsh
+        - bash
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: |
+        Paste the output of these two commands:
+        tail -n 40 ~/.local/state/agent-resurrect/log
+        tail -n 20 ~/.local/state/agent-resurrect/restores.jsonl
+      render: text
