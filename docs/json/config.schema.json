@@ -9,12 +9,13 @@
     "path": {"$ref": "envelope.schema.json#/$defs/path"},
     "values": {
       "type": "object",
-      "required": ["auto_resume", "countdown_seconds", "permission_flag", "max_age_days"],
+      "required": ["auto_resume", "countdown_seconds", "permission_flag", "max_age_days", "pane_search"],
       "properties": {
         "auto_resume": {"enum": ["countdown", "immediate", "ask", "off"]},
         "countdown_seconds": {"type": "integer", "minimum": 0},
         "permission_flag": {"enum": ["mirror", "always", "never"]},
-        "max_age_days": {"type": "integer", "minimum": 0}
+        "max_age_days": {"type": "integer", "minimum": 0},
+        "pane_search": {"enum": ["ask", "auto", "off"]}
       }
     },
     "choices": {

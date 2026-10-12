@@ -487,7 +487,9 @@ class ConfigContractTest(ContractCase):
     def test_config(self):
         document = self.contract("config", "--json", code=OK)
         self.assertEqual(document["values"], {"auto_resume": "countdown", "countdown_seconds": 3,
-                                              "permission_flag": "mirror", "max_age_days": 14})
+                                              "permission_flag": "mirror", "max_age_days": 14,
+                                              "pane_search": "ask"})
+        self.assertEqual(document["choices"]["pane_search"], ["ask", "auto", "off"])
         self.assertEqual(document["choices"]["auto_resume"], ["countdown", "immediate", "ask", "off"])
         self.assertEqual((document["key"], document["value"], document["written"]), (None, None, False))
         document = self.contract("config", "countdown_seconds", "--json", code=OK)

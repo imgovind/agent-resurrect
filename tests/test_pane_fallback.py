@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from agent_resurrect import cli, exitcodes, paths
+from agent_resurrect import cli, config, exitcodes, paths
 from agent_resurrect.terminals.iterm import PANE_TEXT_SCRIPT, ITermAdapter
 from tests.helpers import FakeAgent, FakeTerminal, make_record, proc, temp_home
 from tests.test_cli import CliCase, candidate, put
@@ -227,7 +227,7 @@ class HereFallbackTest(PaneCase):
         self.use(PaneTerminal(SCROLLBACK), FindingAgent(hits=1))
         code, out, _ = self.run_cli("-y", stdin="\n", tty=True)
         self.assertEqual((code, self.launched), (OK, []))
-        self.assertIn("--yes resumes only a strong match", out)
+        self.assertIn("Not resuming without asking: the match is weak.", out)
         self.assertIn("[y/N]", out)
 
     def test_yes_without_a_terminal_still_reads_nothing(self):
@@ -243,6 +243,31 @@ class HereFallbackTest(PaneCase):
         code, _, err = self.run_cli("-y", stdin="", tty=True)
         self.assertEqual((code, self.launched), (BUSY, []))
         self.assertIn("still running", err)
+
+    def test_pane_search_auto_makes_the_bare_command_resume_a_strong_match(self):
+        config.set_value("pane_search", "auto")
+        terminal, _ = self.use(PaneTerminal(SCROLLBACK), FindingAgent())
+        code, out, err = self.run_cli(stdin="", tty=True)   # no -y; empty stdin: any prompt would mean no
+        self.assertEqual(code, OK, err)
+        self.assertEqual((terminal.reads, len(self.launched)), (1, 1))
+        self.assertNotIn("[Y/n]", out)
+
+    def test_pane_search_auto_still_asks_about_a_weak_match(self):
+        config.set_value("pane_search", "auto")
+        self.use(PaneTerminal(SCROLLBACK), FindingAgent(hits=1))
+        code, out, _ = self.run_cli(stdin="\n", tty=True)
+        self.assertEqual((code, self.launched), (OK, []))
+        self.assertIn("Not resuming without asking: the match is weak.", out)
+        self.assertIn("[y/N]", out)
+
+    def test_pane_search_off_never_reads_the_pane_unless_asked_with_yes(self):
+        config.set_value("pane_search", "off")
+        terminal, _ = self.use(PaneTerminal(SCROLLBACK), FindingAgent())
+        code, out, _ = self.run_cli(stdin="y\n", tty=True)
+        self.assertEqual((code, terminal.reads, self.launched), (NOT_FOUND, 0, []))
+        self.assertNotIn("Search this pane", out)
+        code, _, err = self.run_cli("-y", stdin="", tty=True)   # an explicit flag beats the setting
+        self.assertEqual((code, terminal.reads, len(self.launched)), (OK, 1, 1), err)
 
     def test_no_match(self):
         self.use(PaneTerminal("just an ordinary line of shell output with nothing relevant in it"), FindingAgent())

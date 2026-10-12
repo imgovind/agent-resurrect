@@ -248,7 +248,7 @@ agent-resurrect config auto_resume ask
 
 ### Find the session from what is on screen
 
-After a restart, iTerm2 brings back each pane's old scrollback, so the conversation that died is usually still visible above the prompt. If a pane has no record, for example because the session started before you installed agent-resurrect, run `agent-resurrect` in that pane and answer yes when it asks to search the scrollback. It reads the last 2,000 lines of that pane only, finds the matching Claude Code session, shows it, and asks before resuming it (yes by default for a strong match, no for a weak or ambiguous one). A session that is still running in another pane is refused instead of being opened twice. To skip the questions, run `agent-resurrect -y`: it searches straight away and resumes a strong match without asking. `agent-resurrect find --from-pane` does the same search and only prints the result.
+After a restart, iTerm2 brings back each pane's old scrollback, so the conversation that died is usually still visible above the prompt. If a pane has no record, for example because the session started before you installed agent-resurrect, run `agent-resurrect` in that pane and answer yes when it asks to search the scrollback. It reads the last 2,000 lines of that pane only, finds the matching Claude Code session, shows it, and asks before resuming it (yes by default for a strong match, no for a weak or ambiguous one). A session that is still running in another pane is refused instead of being opened twice. To skip the questions, run `agent-resurrect -y`: it searches straight away and resumes a strong match without asking. To make that the default, run `agent-resurrect config pane_search auto`. `agent-resurrect find --from-pane` does the same search and only prints the result.
 
 The scrollback is read through iTerm2's AppleScript interface, only when you type the command in a terminal (scripts and tools without a terminal are refused with status 4), and only for the pane you run it in. It is used for the search and nothing else: it is never stored, logged, printed or sent anywhere. Inside Claude Code, the plugin's `resume-session` skill does the same work when you say things like "I lost my Claude session" or paste text from an old conversation; you can also run it as `/agent-resurrect:resume-session` followed by the text. It prints the resume command for you to run; it never starts the session itself.
 
@@ -262,6 +262,7 @@ auto_resume = countdown
 countdown_seconds = 3
 permission_flag = mirror
 max_age_days = 14
+pane_search = ask
 ```
 
 | Key | Values | Default | Meaning |
@@ -270,6 +271,7 @@ max_age_days = 14
 | `countdown_seconds` | integer | `3` | Length of the countdown. |
 | `permission_flag` | `mirror`, `always`, `never` | `mirror` | When to add `--dangerously-skip-permissions`. See [Permission mode](#permission-mode). |
 | `max_age_days` | integer | `14` | Records not updated for this many days are not restored automatically and are cleaned up. |
+| `pane_search` | `ask`, `auto`, `off` | `ask` | What `agent-resurrect` does in a pane with nothing recorded. `ask` asks before searching the pane's scrollback and before resuming the match; `auto` searches and resumes a strong match without asking, as `-y` does (a weak or ambiguous match is still asked about); `off` never reads the scrollback unless you pass `-y`. |
 
 ## Troubleshooting
 

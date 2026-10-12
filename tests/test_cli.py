@@ -814,13 +814,15 @@ class CliConfigTest(CliCase):
         code, out, _ = self.run_cli("config")
         self.assertEqual(code, OK)
         self.assertEqual(out.splitlines(), ["auto_resume = countdown", "countdown_seconds = 3",
-                                            "permission_flag = mirror", "max_age_days = 14"])
+                                            "permission_flag = mirror", "max_age_days = 14",
+                                            "pane_search = ask"])
         self.assertEqual(self.run_cli("config", "auto_resume", "immediate")[0], OK)
         code, out, _ = self.run_cli("config", "auto_resume")
         self.assertEqual((code, out.strip()), (OK, "immediate"))
         self.assertIn("auto_resume = immediate", paths.config_path().read_text())
 
-        for argv in (("auto_resume", "sometimes"), ("countdown_seconds", "-1"), ("bogus",), ("bogus", "1")):
+        for argv in (("auto_resume", "sometimes"), ("countdown_seconds", "-1"), ("pane_search", "always"),
+                     ("bogus",), ("bogus", "1")):
             code, _, err = self.run_cli("config", *argv)
             self.assertEqual(code, USAGE, argv)
             self.assertTrue(err.startswith("agent-resurrect: "), err)
